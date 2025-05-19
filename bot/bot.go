@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"syscall"
 
+	"github.com/slack-go/slack"
 	"github.com/urfave/cli/v3"
 	"go.uber.org/zap"
 	"slackbot.arpa/bot/config"
@@ -20,6 +21,7 @@ type Bot struct {
 	log            *zap.Logger
 	config         config.Config
 	isShuttingDown atomic.Bool
+	slack          *slack.Client
 	obituary       *obituary.Obituary
 }
 
@@ -42,21 +44,38 @@ func (s *Bot) Setup(ctx context.Context, cmd *cli.Command) (context.Context, err
 	}
 
 	s.log = s.logger.Get()
-	s.obituary = obituary.NewObituary(s.log)
+	s.slack = slack.New(s.config.SlackAPIKey)
+
+	if config.HasFeature(s.config.Features, config.FeatureObituary) {
+		s.obituary = obituary.NewObituary(s.log)
+	}
 
 	return ctx, nil
 }
 
 func (s *Bot) Run(runCtx context.Context) error {
 	var errs error
-	//
-	return errs
+	if s.obituary != nil {
+		if err := s.obituary.Start(runCtx); err != nil {
+			errs = errors.Join(errs, fmt.Errorf("start obituary: %w", err))
+		}
+	}
+
+	if errs != nil {
+		return errs
+	}
+
+	select {}
 }
 
 func (s *Bot) BeginShutdown(ctx context.Context) error {
 	s.isShuttingDown.Store(true)
 	var errs error
-	//
+	if s.obituary != nil {
+		if err := s.obituary.Stop(ctx); err != nil {
+			errs = errors.Join(errs, fmt.Errorf("stop obituary: %w", err))
+		}
+	}
 	return errs
 }
 

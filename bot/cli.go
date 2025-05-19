@@ -45,8 +45,9 @@ func NewCommandRoot(s *Bot) (*bool, *cli.Command) {
 			*start = true
 			return nil
 		},
-		Commands: Commands(s),
-		Flags:    config.Flags(),
+		Commands:               Commands(s),
+		Flags:                  config.Flags(),
+		MutuallyExclusiveFlags: config.MutuallyExclusiveFlags(),
 	}
 }
 

@@ -41,12 +41,6 @@ func Flags() []cli.Flag {
 			},
 		},
 		&cli.StringFlag{
-			Name:     "slack-api-key",
-			Usage:    "Slack API key.",
-			Sources:  cli.EnvVars("SLACK_API_KEY"),
-			Required: true,
-		},
-		&cli.StringFlag{
 			Name:    "data-dir",
 			Usage:   "Data storage directory, may be relative or absolute",
 			Value:   "./",
@@ -73,6 +67,36 @@ func Flags() []cli.Flag {
 	}
 }
 
+func MutuallyExclusiveFlags() []cli.MutuallyExclusiveFlags {
+	return []cli.MutuallyExclusiveFlags{
+		{
+			Required: true,
+			Flags: [][]cli.Flag{
+				{
+					&cli.StringFlag{
+						Name:    "slack-api-key",
+						Usage:   "Slack API key.",
+						Sources: cli.EnvVars("SLACK_API_KEY"),
+					},
+				},
+				{
+					&cli.StringFlag{
+						Name:    "slack-api-key-file",
+						Usage:   "Path to slack API key secret file.",
+						Sources: cli.EnvVars("SLACK_API_KEY_FILE"),
+						Action: func(ctx context.Context, cmd *cli.Command, v string) error {
+							if err := validateFileInput(v); err != nil {
+								return cli.Exit(fmt.Errorf("invalid key file: %v", err), 2)
+							}
+							return nil
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
 // Ensures the directory input is valid.
 //
 // The directory must either exist or the parent directory must exist.
@@ -91,6 +115,19 @@ func validateDirectoryInput(dir string, permissions os.FileMode) error {
 			if err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+// Ensures the file input is valid.
+func validateFileInput(file string) error {
+	if file == "" {
+		return errors.New("file is required")
+	} else {
+		_, err := os.Stat(file)
+		if err != nil {
+			return err
 		}
 	}
 	return nil
