@@ -7,11 +7,11 @@ import (
 	"sync/atomic"
 	"syscall"
 
-	"github.com/slack-go/slack"
 	"github.com/urfave/cli/v3"
 	"go.uber.org/zap"
 	"slackbot.arpa/bot/config"
 	"slackbot.arpa/bot/obituary"
+	"slackbot.arpa/bot/slack"
 	"slackbot.arpa/logger"
 )
 
@@ -21,7 +21,7 @@ type Bot struct {
 	log            *zap.Logger
 	config         config.Config
 	isShuttingDown atomic.Bool
-	slack          *slack.Client
+	slack          *slack.Slack
 	obituary       *obituary.Obituary
 }
 
@@ -44,25 +44,28 @@ func (s *Bot) Setup(ctx context.Context, cmd *cli.Command) (context.Context, err
 	}
 
 	s.log = s.logger.Get()
-	s.slack = slack.New(s.config.SlackAPIKey)
+
+	s.slack = slack.NewSlack(s.log, s.config.Slack)
 
 	if config.HasFeature(s.config.Features, config.FeatureObituary) {
-		s.obituary = obituary.NewObituary(s.log, s.slack, s.config.Obituary)
+		s.obituary = obituary.NewObituary(s.log, s.config.Obituary)
 	}
 
 	return ctx, nil
 }
 
 func (s *Bot) Run(runCtx context.Context) error {
-	var errs error
-	if s.obituary != nil {
-		if err := s.obituary.Start(runCtx); err != nil {
-			errs = errors.Join(errs, fmt.Errorf("start obituary: %w", err))
-		}
+	if err := s.slack.Start(runCtx); err != nil {
+		return fmt.Errorf("start slack: %w", err)
 	}
-
-	if errs != nil {
-		return errs
+	if s.obituary != nil {
+		client := s.slack.Client()
+		if client == nil {
+			return errors.New("slack client is unavailable")
+		}
+		if err := s.obituary.Start(runCtx, client); err != nil {
+			return fmt.Errorf("start obituary: %w", err)
+		}
 	}
 
 	select {}
@@ -71,11 +74,7 @@ func (s *Bot) Run(runCtx context.Context) error {
 func (s *Bot) BeginShutdown(ctx context.Context) error {
 	s.isShuttingDown.Store(true)
 	var errs error
-	if s.obituary != nil {
-		if err := s.obituary.Stop(ctx); err != nil {
-			errs = errors.Join(errs, fmt.Errorf("stop obituary: %w", err))
-		}
-	}
+	//
 	return errs
 }
 
@@ -89,7 +88,14 @@ func (s *Bot) Shutdown(ctx context.Context) error {
 	if err := s.log.Sync(); err != nil && !errors.Is(err, syscall.ENOTTY) {
 		errs = errors.Join(errs, fmt.Errorf("sync logger: %w", err))
 	}
-	//
+	if s.obituary != nil {
+		if err := s.obituary.Stop(ctx); err != nil {
+			errs = errors.Join(errs, fmt.Errorf("stop obituary: %w", err))
+		}
+	}
+	if err := s.slack.Stop(ctx); err != nil {
+		errs = errors.Join(errs, fmt.Errorf("stop slack: %w", err))
+	}
 	return errs
 }
 

@@ -78,8 +78,9 @@ func run(rootCtx context.Context, args []string) error {
 		if err != nil {
 			log.Error("Error during bot startup.", zap.Error(err))
 		}
-		log.Info("shutting down")
-		if err := b.Shutdown(rootCtx); err != nil {
+		err = b.Shutdown(rootCtx)
+		runCancel()
+		if err != nil {
 			log.Error("Error during bot shutdown.", zap.Error(err))
 		}
 	}

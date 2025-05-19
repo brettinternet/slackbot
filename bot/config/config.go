@@ -8,6 +8,7 @@ import (
 
 	"github.com/urfave/cli/v3"
 	"slackbot.arpa/bot/obituary"
+	"slackbot.arpa/bot/slack"
 )
 
 type Feature string
@@ -71,8 +72,9 @@ func (l BuildOpts) MakeConfig(cmd *cli.Command) Config {
 		Environment:           cmd.String("env"),
 		DataDir:               cmd.String("data-dir"),
 		Features:              cmd.StringSlice("features"),
-		SlackAPIKey:           cmd.String("slack-api-key"),
-		ObituaryNotifyChannel: cmd.String("obituary-notify-channel"),
+		SlackClientID:         cmd.String("slack-client-id"),
+		SlackClientSecret:     cmd.String("slack-client-secret"),
+		ObituaryNotifyChannel: cmd.String("slack-obituary-notify-channel"),
 	}
 
 	return newConfig(opts)
@@ -85,7 +87,8 @@ type configOpts struct {
 	Environment           string
 	DataDir               string
 	Features              []string
-	SlackAPIKey           string
+	SlackClientID         string
+	SlackClientSecret     string
 	ObituaryNotifyChannel string
 }
 
@@ -96,7 +99,7 @@ type Config struct {
 	Environment Environment
 	DataDir     string
 	Features    []Feature // Feature flags
-	SlackAPIKey string
+	Slack       slack.Config
 	Obituary    obituary.Config
 }
 
@@ -122,7 +125,11 @@ func newConfig(opts configOpts) Config {
 		Environment: environmentFromString(opts.Environment),
 		Features:    features,
 		DataDir:     dataDir,
-		SlackAPIKey: opts.SlackAPIKey,
+		Slack: slack.Config{
+			ClientSecret: opts.SlackClientSecret,
+			ClientID:     opts.SlackClientID,
+			Debug:        false,
+		},
 		Obituary: obituary.Config{
 			NotifyChannel: opts.ObituaryNotifyChannel,
 			DataDir:       dataDir,
