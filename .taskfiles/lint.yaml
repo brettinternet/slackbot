@@ -6,6 +6,12 @@ vars:
   CONFIG_DIR: ./
 
 tasks:
+  default:
+    desc: Run all linters
+    cmds:
+      - task: yaml
+      - task: go
+
   yaml:
     desc: Run yamllint
     cmds:
@@ -14,3 +20,11 @@ tasks:
       - sh: command -v yamllint
         msg: |
           Install 'yamllint' with 'pip install -r requirements.txt' or via your package manager (e.g. homebrew).
+
+  go:
+    desc: Run golint
+    cmds:
+      - golint ./...
+    preconditions:
+      - sh: command -v golint
+        msg: Missing golint

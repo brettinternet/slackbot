@@ -43,4 +43,5 @@ tasks:
     cmds:
       - for:
           - github.com/air-verse/air@latest
+          - golang.org/x/lint/golint@latest
         cmd: go install {{ .ITEM }}

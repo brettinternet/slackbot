@@ -3,7 +3,7 @@ fail_fast: false
 exclude: wailsjs
 repos:
   - repo: https://github.com/adrienverge/yamllint
-    rev: v1.37.0
+    rev: v1.37.1
     hooks:
       - args:
           - --config-file
@@ -26,12 +26,12 @@ repos:
     hooks:
       - id: fix-smartquotes
   - repo: https://github.com/gruntwork-io/pre-commit
-    rev: v0.1.28
+    rev: v0.1.29
     hooks:
       - id: terraform-fmt
       - id: terraform-validate
       - id: tflint
   - repo: https://github.com/zricethezav/gitleaks
-    rev: v8.24.3
+    rev: v8.26.0
     hooks:
       - id: gitleaks
