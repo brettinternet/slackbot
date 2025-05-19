@@ -94,18 +94,18 @@ func MutuallyExclusiveFlags() []cli.MutuallyExclusiveFlags {
 				{
 					&cli.StringFlag{
 						Name:    "slack-token",
-						Usage:   "Slack Client Secret for OAuth authentication (required when using --slack-client-id).",
+						Usage:   "Slack Client Secret for OAuth authentication.",
 						Sources: cli.EnvVars("SLACK_TOKEN"),
 					},
 				},
 				{
 					&cli.StringFlag{
 						Name:    "slack-token-file",
-						Usage:   "Path to slack Client Secret file (required when using --slack-client-id).",
+						Usage:   "Path to Slack Client Secret for OAuth authentication.",
 						Sources: cli.EnvVars("SLACK_TOKEN_FILE"),
 						Action: func(ctx context.Context, cmd *cli.Command, v string) error {
 							if err := validateFileInput(v); err != nil {
-								return cli.Exit(fmt.Errorf("invalid client secret file: %v", err), 2)
+								return cli.Exit(fmt.Errorf("invalid slack token file: %v", err), 2)
 							}
 							return nil
 						},

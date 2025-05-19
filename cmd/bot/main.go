@@ -51,6 +51,9 @@ func run(rootCtx context.Context, args []string) error {
 			err := b.Run(runCtx)
 			svcErr <- err
 		}()
+	} else {
+		defer runCancel()
+		return nil
 	}
 
 	log := b.Logger()
