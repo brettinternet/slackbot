@@ -62,6 +62,9 @@ jobs:
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
+        env:
+          BUILD_VERSION: ${{ steps.meta.outputs.sha }}
+          BUILD_DATE: ${{ github.event.repository.updated_at }}
         with:
           context: .
           file: ${{ env.DOCKERFILE}}

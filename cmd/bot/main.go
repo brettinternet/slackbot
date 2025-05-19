@@ -54,7 +54,6 @@ func run(rootCtx context.Context, args []string) error {
 	}
 
 	log := b.Logger()
-	log.Info("Bot started.")
 	select {
 	case <-rootCtx.Done():
 		stop()
