@@ -1,0 +1,37 @@
+---
+fail_fast: false
+exclude: wailsjs
+repos:
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.37.0
+    hooks:
+      - args:
+          - --config-file
+          - .yamllint.yaml
+        id: yamllint
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-merge-conflict
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+  - repo: https://github.com/Lucas-C/pre-commit-hooks
+    rev: v1.5.5
+    hooks:
+      - id: remove-crlf
+  - repo: https://github.com/sirosen/texthooks
+    rev: 0.6.8
+    hooks:
+      - id: fix-smartquotes
+  - repo: https://github.com/gruntwork-io/pre-commit
+    rev: v0.1.28
+    hooks:
+      - id: terraform-fmt
+      - id: terraform-validate
+      - id: tflint
+  - repo: https://github.com/zricethezav/gitleaks
+    rev: v8.24.3
+    hooks:
+      - id: gitleaks

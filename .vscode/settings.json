@@ -1,0 +1,12 @@
+{
+  "files.associations": {
+    "example.env": "ini"
+  },
+  "gopls": {
+    "build.buildFlags": ["-tags=dev"]
+  },
+  "go.useLanguageServer": true,
+  "editor.quickSuggestions": {
+    "strings": "on"
+  }
+}

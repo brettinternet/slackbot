@@ -1,0 +1,24 @@
+---
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+version: "3"
+
+env:
+  LOG_LEVEL: debug
+  BUILD_VERSION: dev
+  BUILD_DATE:
+    sh: date -u '+%Y-%m-%dT%H:%M:%SZ'
+
+tasks:
+  start:
+    desc: Start server in development
+    cmd: air
+
+  build:
+    desc: Build
+    vars:
+      LDFLAGS: >-
+        -s -w
+        -X main.buildVersion=$BUILD_VERSION
+        -X main.buildTime=$BUILD_DATE
+    cmds:
+      - go build -ldflags "{{.LDFLAGS}}" -o ./build/server ./main.go

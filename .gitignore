@@ -1,0 +1,46 @@
+# Local env vars
+.env
+
+# NPM deps
+node_modules
+
+# Container storage
+/docker/data
+
+# Local taskfile
+Taskfile.y*ml
+
+# Go
+go.work.sum
+
+# Test binary
+*.test
+
+# Logs
+*.log
+dump
+
+# Deps
+Brewfile.lock.json
+
+*.pem
+
+token
+jwt
+*.db
+*.db-shm
+*.db-wal
+
+# Air
+tmp
+
+# build output
+build/
+/cmd/*/data
+
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
