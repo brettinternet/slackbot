@@ -81,6 +81,13 @@ func MutuallyExclusiveFlags() []cli.MutuallyExclusiveFlags {
 				},
 				{
 					&cli.StringFlag{
+						Name:    "obituary-notify-channel",
+						Usage:   "Channel to notify when a user is deleted from the Slack organization.",
+						Sources: cli.EnvVars("OBITUARY_NOTIFY_CHANNEL"),
+					},
+				},
+				{
+					&cli.StringFlag{
 						Name:    "slack-api-key-file",
 						Usage:   "Path to slack API key secret file.",
 						Sources: cli.EnvVars("SLACK_API_KEY_FILE"),

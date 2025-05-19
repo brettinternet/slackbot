@@ -47,7 +47,7 @@ func (s *Bot) Setup(ctx context.Context, cmd *cli.Command) (context.Context, err
 	s.slack = slack.New(s.config.SlackAPIKey)
 
 	if config.HasFeature(s.config.Features, config.FeatureObituary) {
-		s.obituary = obituary.NewObituary(s.log)
+		s.obituary = obituary.NewObituary(s.log, s.slack, s.config.Obituary)
 	}
 
 	return ctx, nil

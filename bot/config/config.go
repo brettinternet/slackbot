@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	"github.com/urfave/cli/v3"
+	"slackbot.arpa/bot/obituary"
 )
 
 type Feature string
@@ -64,26 +65,28 @@ func (l BuildOpts) MakeConfig(cmd *cli.Command) Config {
 		l.BuildTime = "unknown"
 	}
 	opts := configOpts{
-		Version:     l.BuildVersion,
-		BuildTime:   l.BuildTime,
-		LogLevel:    cmd.String("log-level"),
-		Environment: cmd.String("env"),
-		DataDir:     cmd.String("data-dir"),
-		Features:    cmd.StringSlice("features"),
-		SlackAPIKey: cmd.String("slack-api-key"),
+		Version:               l.BuildVersion,
+		BuildTime:             l.BuildTime,
+		LogLevel:              cmd.String("log-level"),
+		Environment:           cmd.String("env"),
+		DataDir:               cmd.String("data-dir"),
+		Features:              cmd.StringSlice("features"),
+		SlackAPIKey:           cmd.String("slack-api-key"),
+		ObituaryNotifyChannel: cmd.String("obituary-notify-channel"),
 	}
 
 	return newConfig(opts)
 }
 
 type configOpts struct {
-	Version     string
-	BuildTime   string
-	LogLevel    string
-	Environment string
-	DataDir     string
-	Features    []string
-	SlackAPIKey string
+	Version               string
+	BuildTime             string
+	LogLevel              string
+	Environment           string
+	DataDir               string
+	Features              []string
+	SlackAPIKey           string
+	ObituaryNotifyChannel string
 }
 
 type Config struct {
@@ -94,6 +97,7 @@ type Config struct {
 	DataDir     string
 	Features    []Feature // Feature flags
 	SlackAPIKey string
+	Obituary    obituary.Config
 }
 
 func newConfig(opts configOpts) Config {
@@ -119,6 +123,10 @@ func newConfig(opts configOpts) Config {
 		Features:    features,
 		DataDir:     dataDir,
 		SlackAPIKey: opts.SlackAPIKey,
+		Obituary: obituary.Config{
+			NotifyChannel: opts.ObituaryNotifyChannel,
+			DataDir:       dataDir,
+		},
 	}
 }
 
