@@ -65,12 +65,6 @@ func Flags() []cli.Flag {
 			},
 		},
 		&cli.StringFlag{
-			Name:     "slack-client-id",
-			Usage:    "Slack Client ID for OAuth authentication.",
-			Sources:  cli.EnvVars("SLACK_CLIENT_ID"),
-			Required: true,
-		},
-		&cli.StringFlag{
 			Name:    "slack-obituary-notify-channel",
 			Usage:   "Channel name to notify when a user is deleted from the Slack organization.",
 			Sources: cli.EnvVars("SLACK_OBITUARY_NOTIFY_CHANNEL"),
@@ -81,21 +75,20 @@ func Flags() []cli.Flag {
 func MutuallyExclusiveFlags() []cli.MutuallyExclusiveFlags {
 	return []cli.MutuallyExclusiveFlags{
 		{
-			// Client secret is only required when using client ID
-			Required: false,
+			Required: true,
 			Flags: [][]cli.Flag{
 				{
 					&cli.StringFlag{
-						Name:    "slack-client-secret",
+						Name:    "slack-token",
 						Usage:   "Slack Client Secret for OAuth authentication (required when using --slack-client-id).",
-						Sources: cli.EnvVars("SLACK_CLIENT_SECRET"),
+						Sources: cli.EnvVars("SLACK_TOKEN"),
 					},
 				},
 				{
 					&cli.StringFlag{
-						Name:    "slack-client-secret-file",
+						Name:    "slack-token-file",
 						Usage:   "Path to slack Client Secret file (required when using --slack-client-id).",
-						Sources: cli.EnvVars("SLACK_CLIENT_SECRET_FILE"),
+						Sources: cli.EnvVars("SLACK_TOKEN_FILE"),
 						Action: func(ctx context.Context, cmd *cli.Command, v string) error {
 							if err := validateFileInput(v); err != nil {
 								return cli.Exit(fmt.Errorf("invalid client secret file: %v", err), 2)

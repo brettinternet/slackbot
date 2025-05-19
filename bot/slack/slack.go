@@ -3,16 +3,14 @@ package slack
 import (
 	"context"
 	"fmt"
-	"net/http"
 
 	"github.com/slack-go/slack"
 	"go.uber.org/zap"
 )
 
 type Config struct {
-	ClientID     string
-	ClientSecret string
-	Debug        bool
+	Token string
+	Debug bool
 }
 
 type Slack struct {
@@ -29,7 +27,7 @@ func NewSlack(log *zap.Logger, config Config) *Slack {
 }
 
 func (s *Slack) Start(ctx context.Context) error {
-	if s.config.ClientID == "" || s.config.ClientSecret == "" {
+	if s.config.Token == "" {
 		return fmt.Errorf("no Slack authentication credentials provided")
 	}
 
@@ -37,23 +35,10 @@ func (s *Slack) Start(ctx context.Context) error {
 		slack.OptionDebug(s.config.Debug),
 	}
 
-	s.log.Info("Using Slack OAuth authentication with client ID and secret")
-	oauthResp, err := slack.GetOAuthV2Response(
-		http.DefaultClient,
-		s.config.ClientID,
-		s.config.ClientSecret,
-		"", // code is empty for client_credentials grant
-		"", // redirect URI is not needed for client_credentials grant
-	)
-	if err != nil {
+	s.client = slack.New(s.config.Token, clientOpts...)
+
+	if _, err := s.client.AuthTest(); err != nil {
 		return fmt.Errorf("failed to authenticate with Slack: %w", err)
-	}
-
-	s.client = slack.New(oauthResp.AccessToken, clientOpts...)
-
-	if oauthResp.RefreshToken != "" {
-		s.log.Debug("Received refresh token, token will be automatically refreshed")
-		// Here you could set up a background refresh process for the token
 	}
 
 	return nil

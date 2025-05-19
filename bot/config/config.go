@@ -72,8 +72,8 @@ func (l BuildOpts) MakeConfig(cmd *cli.Command) Config {
 		Environment:           cmd.String("env"),
 		DataDir:               cmd.String("data-dir"),
 		Features:              cmd.StringSlice("features"),
-		SlackClientID:         cmd.String("slack-client-id"),
-		SlackClientSecret:     cmd.String("slack-client-secret"),
+		SlackToken:            cmd.String("slack-token"),
+		SlackTokenFile:        cmd.String("slack-token-file"),
 		ObituaryNotifyChannel: cmd.String("slack-obituary-notify-channel"),
 	}
 
@@ -87,8 +87,8 @@ type configOpts struct {
 	Environment           string
 	DataDir               string
 	Features              []string
-	SlackClientID         string
-	SlackClientSecret     string
+	SlackToken            string
+	SlackTokenFile        string
 	ObituaryNotifyChannel string
 }
 
@@ -118,6 +118,14 @@ func newConfig(opts configOpts) Config {
 		dataDir, _ = relativeToAbsolutePath(dataDir)
 	}
 
+	slackToken := opts.SlackToken
+	if opts.SlackTokenFile != "" {
+		tokenBytes, err := os.ReadFile(opts.SlackTokenFile)
+		if err == nil {
+			slackToken = string(tokenBytes)
+		}
+	}
+
 	return Config{
 		Version:     opts.Version,
 		BuildTime:   opts.BuildTime,
@@ -126,9 +134,8 @@ func newConfig(opts configOpts) Config {
 		Features:    features,
 		DataDir:     dataDir,
 		Slack: slack.Config{
-			ClientSecret: opts.SlackClientSecret,
-			ClientID:     opts.SlackClientID,
-			Debug:        false,
+			Token: slackToken,
+			Debug: false,
 		},
 		Obituary: obituary.Config{
 			NotifyChannel: opts.ObituaryNotifyChannel,
