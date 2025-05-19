@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	"github.com/urfave/cli/v3"
+	"slackbot.arpa/bot/http"
 	"slackbot.arpa/bot/obituary"
 	"slackbot.arpa/bot/slack"
 )
@@ -72,6 +73,7 @@ func (l BuildOpts) MakeConfig(cmd *cli.Command) Config {
 		Environment:           cmd.String("env"),
 		DataDir:               cmd.String("data-dir"),
 		Features:              cmd.StringSlice("features"),
+		ServerURL:             cmd.String("server-url"),
 		SlackToken:            cmd.String("slack-token"),
 		SlackTokenFile:        cmd.String("slack-token-file"),
 		ObituaryNotifyChannel: cmd.String("slack-obituary-notify-channel"),
@@ -87,6 +89,7 @@ type configOpts struct {
 	Environment           string
 	DataDir               string
 	Features              []string
+	ServerURL             string
 	SlackToken            string
 	SlackTokenFile        string
 	ObituaryNotifyChannel string
@@ -99,6 +102,7 @@ type Config struct {
 	Environment Environment
 	DataDir     string
 	Features    []Feature // Feature flags
+	Server      http.Config
 	Slack       slack.Config
 	Obituary    obituary.Config
 }
@@ -131,8 +135,11 @@ func newConfig(opts configOpts) Config {
 		BuildTime:   opts.BuildTime,
 		LogLevel:    opts.LogLevel,
 		Environment: environmentFromString(opts.Environment),
-		Features:    features,
 		DataDir:     dataDir,
+		Features:    features,
+		Server: http.Config{
+			ServerURL: opts.ServerURL,
+		},
 		Slack: slack.Config{
 			Token: slackToken,
 			Debug: false,

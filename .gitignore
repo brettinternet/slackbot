@@ -37,6 +37,7 @@ tmp
 # build output
 build/
 /cmd/*/data
+/docker/*/data
 
 # Binaries
 *.exe

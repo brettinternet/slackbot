@@ -23,3 +23,8 @@ tasks:
         -X main.buildTime=$BUILD_DATE
     cmds:
       - go build -ldflags "{{.LDFLAGS}}" -o ./build/server ./main.go
+
+  build:docker:
+    desc: Build
+    cmds:
+      - docker build -t slackbot:latest -f ../../docker/bot/Dockerfile ../../

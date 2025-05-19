@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -60,6 +62,18 @@ func Flags() []cli.Flag {
 					if !IsFeature(v) {
 						return cli.Exit(fmt.Errorf("invalid feature option: %s", v), 2)
 					}
+				}
+				return nil
+			},
+		},
+		&cli.StringFlag{
+			Name:    "server-url",
+			Usage:   "Server URL",
+			Value:   "http://localhost:4200",
+			Sources: cli.EnvVars("SERVER_URL"),
+			Action: func(ctx context.Context, cmd *cli.Command, v string) error {
+				if err := validateURLInput(v); err != nil {
+					return cli.Exit(fmt.Errorf("invalid server URL: %v", err), 2)
 				}
 				return nil
 			},
@@ -136,4 +150,20 @@ func validateFileInput(file string) error {
 		}
 	}
 	return nil
+}
+
+func validateURLInput(input string) error {
+	if input == "" {
+		return errors.New("URL is required")
+	} else {
+		u, err := url.ParseRequestURI(input)
+		if err != nil {
+			return fmt.Errorf("invalid url '%v': %v", input, err)
+		}
+		host, _, err := net.SplitHostPort(u.Host)
+		if err != nil || host == "" {
+			return fmt.Errorf("invalid url '%v': %v", input, err)
+		}
+		return nil
+	}
 }

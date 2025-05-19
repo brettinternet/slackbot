@@ -1,0 +1,30 @@
+---
+x-options: &options
+  tty: true
+  networks: [default]
+  environment: &environment
+    TZ: "${TIMEZONE:-America/Denver}"
+  deploy: &deploy
+    restart_policy:
+      condition: unless-stopped
+  env_file: [.env]
+
+name: slackbot
+
+services:
+  slackbot:
+    <<: *options
+    container_name: slackbot
+    build:
+      context: ./
+      dockerfile: ./docker/bot/Dockerfile
+    environment:
+      <<: *environment
+      SERVER_URL: http://0.0.0.0:4200
+      FEATURE_FLAGS: obituary
+      ENVIRONMENT: development
+      DATA_DIR: /app/data
+    volumes:
+      - ./docker/bot/data:/app/data
+    ports:
+      - 4200:4200

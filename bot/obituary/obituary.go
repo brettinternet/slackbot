@@ -194,6 +194,19 @@ func (o *Obituary) checkForDeletedUsers(ctx context.Context) error {
 		}
 	}
 
+	// Check for new or modified users
+	hasChanges := len(deletedUsers) > 0
+	if !hasChanges {
+		for id, newUser := range newUserMap {
+			if oldUser, exists := currentUsers[id]; !exists ||
+				oldUser.Name != newUser.Name ||
+				oldUser.RealName != newUser.RealName {
+				hasChanges = true
+				break
+			}
+		}
+	}
+
 	o.mutex.Lock()
 	o.knownUsers = make(map[string]*slack.User)
 	for id, user := range newUserMap {
@@ -205,14 +218,21 @@ func (o *Obituary) checkForDeletedUsers(ctx context.Context) error {
 	for _, user := range deletedUsers {
 		o.notifyUserDeleted(ctx, &user)
 	}
+
 	if len(deletedUsers) > 0 {
 		o.log.Info("Detected deleted users", zap.Int("count", len(deletedUsers)))
 	} else {
 		o.log.Debug("No deleted users detected")
 	}
 
-	if err := o.saveUsersToDisk(); err != nil {
-		o.log.Warn("Failed to save users to disk", zap.Error(err))
+	// Only save to disk if there were changes
+	if hasChanges {
+		o.log.Debug("Changes detected in user list, saving to disk")
+		if err := o.saveUsersToDisk(); err != nil {
+			o.log.Warn("Failed to save users to disk", zap.Error(err))
+		}
+	} else {
+		o.log.Debug("No changes in user list, skipping save to disk")
 	}
 
 	return nil
