@@ -17,7 +17,7 @@ var (
 	buildTime    string
 
 	// https://victoriametrics.com/blog/go-graceful-shutdown/
-	terminationGracePeriod = 22 * time.Second
+	terminationGracePeriod = 12 * time.Second
 	terminationDrainPeriod = 5 * time.Second
 	terminationHardPeriod  = 3 * time.Second
 )
