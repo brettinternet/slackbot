@@ -21,7 +21,7 @@ services:
     environment:
       <<: *environment
       SERVER_URL: http://0.0.0.0:4200
-      FEATURE_FLAGS: obituary
+      FEATURES: obituary
       ENVIRONMENT: development
       DATA_DIR: /app/data
     volumes:

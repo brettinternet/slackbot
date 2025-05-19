@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -39,7 +40,6 @@ type Obituary struct {
 }
 
 func NewObituary(log *zap.Logger, config Config) *Obituary {
-	// Make sure DataDir exists
 	if config.DataDir != "" {
 		if _, err := os.Stat(config.DataDir); os.IsNotExist(err) {
 			if err := os.MkdirAll(config.DataDir, 0755); err != nil {
@@ -67,6 +67,11 @@ func (o *Obituary) Start(ctx context.Context, slackClient *slack.Client) error {
 	}
 	o.slack = slackClient
 
+	// Verify the channel format and existence early
+	if !o.validateChannel(ctx) {
+		o.log.Warn("Continuing despite invalid notification channel", zap.String("channel", o.notifyChannel))
+	}
+
 	ctx, cancel := context.WithCancel(ctx)
 	o.cancel = cancel
 
@@ -77,7 +82,7 @@ func (o *Obituary) Start(ctx context.Context, slackClient *slack.Client) error {
 		o.log.Warn("Failed to load previous users from disk", zap.Error(err))
 	}
 
-	if err := o.fetchAllUsers(); err != nil {
+	if err := o.fetchAllUsers(ctx); err != nil {
 		return fmt.Errorf("fetch initial user list: %w", err)
 	}
 
@@ -106,6 +111,8 @@ func (o *Obituary) Start(ctx context.Context, slackClient *slack.Client) error {
 	if err := o.saveUsersToDisk(); err != nil {
 		o.log.Warn("Failed to save initial users to disk", zap.Error(err))
 	}
+
+	o.sendStartupMessage(ctx)
 
 	o.log.Debug("Obituary service started, monitoring for deleted users")
 
@@ -143,7 +150,7 @@ func (o *Obituary) Stop(ctx context.Context) error {
 }
 
 // fetchAllUsers gets all users from the Slack workspace and stores them in a map
-func (o *Obituary) fetchAllUsers() error {
+func (o *Obituary) fetchAllUsers(ctx context.Context) error {
 	o.mutex.Lock()
 	defer o.mutex.Unlock()
 
@@ -152,7 +159,7 @@ func (o *Obituary) fetchAllUsers() error {
 	var users []slack.User
 	var err error
 
-	users, err = o.slack.GetUsers()
+	users, err = o.slack.GetUsersContext(ctx)
 	if err != nil {
 		return err
 	}
@@ -177,7 +184,7 @@ func (o *Obituary) checkForDeletedUsers(ctx context.Context) error {
 	}
 	o.mutex.Unlock()
 
-	users, err := o.slack.GetUsers()
+	users, err := o.slack.GetUsersContext(ctx)
 	if err != nil {
 		return err
 	}
@@ -225,7 +232,6 @@ func (o *Obituary) checkForDeletedUsers(ctx context.Context) error {
 		o.log.Debug("No deleted users detected")
 	}
 
-	// Only save to disk if there were changes
 	if hasChanges {
 		o.log.Debug("Changes detected in user list, saving to disk")
 		if err := o.saveUsersToDisk(); err != nil {
@@ -273,13 +279,84 @@ func (o *Obituary) notifyUserDeleted(ctx context.Context, user *slack.User) {
 		},
 	}
 
-	_, _, err := o.slack.PostMessage(
+	_, _, err := o.slack.PostMessageContext(
+		ctx,
 		o.notifyChannel,
 		slack.MsgOptionAttachments(attachment),
 		slack.MsgOptionAsUser(true),
 	)
 	if err != nil {
 		o.log.Error("send notification", zap.Error(err), zap.String("channel", o.notifyChannel))
+	}
+}
+
+// sendStartupMessage sends a notification to the configured channel to confirm the bot is running
+// but only if the bot hasn't posted any messages to the channel before
+func (o *Obituary) sendStartupMessage(ctx context.Context) {
+	if o.notifyChannel == "" {
+		o.log.Debug("No notification channel configured, skipping startup message")
+		return
+	}
+
+	authTest, err := o.slack.AuthTestContext(ctx)
+	if err != nil {
+		o.log.Error("Failed to get bot identity, sending notification anyway", zap.Error(err))
+	} else {
+		botUserID := authTest.UserID
+		o.log.Debug("Bot identity", zap.String("user_id", botUserID), zap.String("bot_name", authTest.User))
+
+		if !o.validateChannel(ctx) {
+			o.log.Error("Skipping startup notification due to channel validation failure")
+			return
+		}
+
+		history, err := o.slack.GetConversationHistoryContext(ctx, &slack.GetConversationHistoryParameters{
+			ChannelID: o.notifyChannel,
+			Limit:     10,
+		})
+		if err != nil {
+			o.log.Error("Failed to get channel history, sending notification anyway",
+				zap.Error(err),
+				zap.String("channel", o.notifyChannel))
+		} else {
+			for _, msg := range history.Messages {
+				if msg.User == botUserID || (msg.BotID != "" && msg.Username == authTest.User) {
+					o.log.Info("Bot has already posted messages to the channel, skipping startup notification")
+					return
+				}
+			}
+		}
+	}
+
+	o.log.Info("Sending startup notification", zap.String("channel", o.notifyChannel))
+
+	attachment := slack.Attachment{
+		Color:      "#36a64f", // Green color
+		Title:      "Intro",
+		Text:       "🟢 *Slack Obituary Bot is now running*",
+		Footer:     fmt.Sprintf("Monitoring %d users", len(o.knownUsers)),
+		FooterIcon: "https://platform.slack-edge.com/img/default_application_icon.png",
+		Ts:         json.Number(fmt.Sprintf("%d", time.Now().Unix())),
+	}
+
+	_, _, err = o.slack.PostMessageContext(
+		ctx,
+		o.notifyChannel,
+		slack.MsgOptionAttachments(attachment),
+		slack.MsgOptionAsUser(true),
+	)
+	if err != nil {
+		// Log the channel ID for debugging purposes
+		o.log.Error("Failed to send startup notification - check that the channel ID is correct and in the format 'C0123456789'",
+			zap.Error(err),
+			zap.String("channel", o.notifyChannel))
+
+		// The channel ID is likely incorrect. Let's output some recommendations.
+		if err.Error() == "channel_not_found" {
+			o.log.Warn("The channel may not exist or the bot may not have been added to the channel.",
+				zap.String("channel", o.notifyChannel),
+				zap.String("recommendation", "Make sure to invite the bot to the channel or check the channel ID"))
+		}
 	}
 }
 
@@ -353,4 +430,31 @@ func (o *Obituary) loadUsersFromDisk() (map[string]*slack.User, error) {
 
 	o.log.Debug("Loaded users from disk", zap.String("file", o.usersFile), zap.Int("count", len(result)))
 	return result, nil
+}
+
+func (o *Obituary) validateChannel(ctx context.Context) bool {
+	if o.notifyChannel == "" {
+		o.log.Warn("No notification channel configured")
+		return false
+	}
+
+	if len(o.notifyChannel) < 9 || !strings.HasPrefix(o.notifyChannel, "C") {
+		o.log.Warn("Channel ID format may be invalid - should typically be 'C' followed by alphanumeric chars",
+			zap.String("channel", o.notifyChannel))
+	}
+
+	_, err := o.slack.GetConversationInfoContext(ctx, &slack.GetConversationInfoInput{
+		ChannelID:     o.notifyChannel,
+		IncludeLocale: false,
+	})
+	if err != nil {
+		o.log.Error("Channel not found or not accessible - check the channel ID and bot permissions",
+			zap.Error(err),
+			zap.String("channel", o.notifyChannel),
+			zap.String("recommendation", "Make sure to invite the bot to the channel"))
+		return false
+	}
+
+	o.log.Debug("Channel validation successful", zap.String("channel", o.notifyChannel))
+	return true
 }

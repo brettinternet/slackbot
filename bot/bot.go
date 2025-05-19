@@ -81,10 +81,6 @@ func (s *Bot) BeginShutdown(ctx context.Context) error {
 // Shutdown resources in reverse order of the Setup/Run
 func (s *Bot) Shutdown(ctx context.Context) error {
 	var errs error
-	// Sync throws an error when logging to console (sync is for buffered file logging)
-	// `sync /dev/stderr: inappropriate ioctl for device`
-	// https://github.com/uber-go/zap/issues/880
-	// https://github.com/uber-go/zap/issues/991#issuecomment-962098428
 	if err := s.httpServer.Shutdown(ctx); err != nil {
 		errs = errors.Join(errs, fmt.Errorf("shutdown http server: %w", err))
 	}
@@ -96,6 +92,10 @@ func (s *Bot) Shutdown(ctx context.Context) error {
 	if err := s.slack.Stop(ctx); err != nil {
 		errs = errors.Join(errs, fmt.Errorf("stop slack: %w", err))
 	}
+	// Sync throws an error when logging to console (sync is for buffered file logging)
+	// `sync /dev/stderr: inappropriate ioctl for device`
+	// https://github.com/uber-go/zap/issues/880
+	// https://github.com/uber-go/zap/issues/991#issuecomment-962098428
 	if err := s.log.Sync(); err != nil && !errors.Is(err, syscall.ENOTTY) {
 		errs = errors.Join(errs, fmt.Errorf("sync logger: %w", err))
 	}
