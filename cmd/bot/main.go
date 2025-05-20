@@ -13,8 +13,9 @@ import (
 )
 
 var (
-	buildVersion string
-	buildTime    string
+	buildVersion     string
+	buildTime        string
+	buildEnvironment string
 
 	// https://victoriametrics.com/blog/go-graceful-shutdown/
 	terminationGracePeriod = 12 * time.Second
@@ -33,8 +34,9 @@ func run(rootCtx context.Context, args []string) error {
 	defer stop()
 
 	opts := config.BuildOpts{
-		BuildVersion: config.Default(buildVersion, "dev"),
-		BuildTime:    buildTime,
+		BuildVersion:     config.Default(buildVersion, "dev"),
+		BuildTime:        buildTime,
+		BuildEnvironment: buildEnvironment,
 	}
 
 	b := bot.NewBot(opts)

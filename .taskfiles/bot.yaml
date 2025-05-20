@@ -21,6 +21,7 @@ tasks:
         -s -w
         -X main.buildVersion=$BUILD_VERSION
         -X main.buildTime=$BUILD_DATE
+        -X main.buildEnvironment=production
     cmds:
       - go build -ldflags "{{.LDFLAGS}}" -o ./build/server ./main.go
 

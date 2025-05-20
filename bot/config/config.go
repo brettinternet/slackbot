@@ -7,6 +7,7 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/goccy/go-yaml"
 	"github.com/urfave/cli/v3"
@@ -27,6 +28,12 @@ const (
 	EnvironmentDevelopment Environment = "development"
 	EnvironmentProduction  Environment = "production"
 )
+
+var EnvironmentOptions = []string{EnvironmentDevelopment.String(), EnvironmentProduction.String()}
+
+func IsEnvironment(v string) bool {
+	return slices.Contains(EnvironmentOptions, strings.ToLower(v))
+}
 
 func (f Feature) String() string {
 	return string(f)
@@ -61,8 +68,9 @@ func HasFeature(features []Feature, f Feature) bool {
 
 // From LDFLAGS
 type BuildOpts struct {
-	BuildVersion string
-	BuildTime    string
+	BuildVersion     string
+	BuildTime        string
+	BuildEnvironment string
 }
 
 func (l BuildOpts) MakeConfig(cmd *cli.Command) (Config, error) {
@@ -72,11 +80,18 @@ func (l BuildOpts) MakeConfig(cmd *cli.Command) (Config, error) {
 	if l.BuildTime == "" {
 		l.BuildTime = "unknown"
 	}
+	environment := cmd.String("env")
+	if environment == "" {
+		environment = l.BuildEnvironment
+	}
+	if environment == "" || !IsEnvironment(environment) {
+		environment = EnvironmentProduction.String()
+	}
 	opts := configOpts{
 		Version:                l.BuildVersion,
 		BuildTime:              l.BuildTime,
 		LogLevel:               cmd.String("log-level"),
-		Environment:            cmd.String("env"),
+		Environment:            environment,
 		DataDir:                cmd.String("data-dir"),
 		Features:               cmd.StringSlice("features"),
 		ServerHost:             cmd.String("server-host"),

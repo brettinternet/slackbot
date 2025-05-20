@@ -33,14 +33,15 @@ func Flags() []cli.Flag {
 		&cli.StringFlag{
 			Name:    "env",
 			Usage:   "build environment description",
-			Value:   "development",
 			Sources: cli.EnvVars("ENVIRONMENT"),
 			Action: func(ctx context.Context, cmd *cli.Command, v string) error {
-				options := []string{EnvironmentDevelopment.String(), EnvironmentProduction.String()}
-				if slices.Contains(options, strings.ToLower(v)) {
+				if v == "" {
 					return nil
 				}
-				return cli.Exit(fmt.Errorf("'env' must be %v. Received: %v", strings.Join(options, ", "), v), 2)
+				if IsEnvironment(v) {
+					return nil
+				}
+				return cli.Exit(fmt.Errorf("'env' must be %v. Received: %v", strings.Join(EnvironmentOptions, ", "), v), 2)
 			},
 		},
 		&cli.StringFlag{

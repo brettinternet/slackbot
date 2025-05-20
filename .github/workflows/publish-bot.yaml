@@ -54,7 +54,7 @@ jobs:
           images: |
             ghcr.io/${{ github.actor }}/${{ env.IMAGE_NAME }}
           flavor: latest=auto
-          tags: type=sha
+          tags: type=ref,event=branch
           labels: |
             org.opencontainers.image.name=${{ env.IMAGE_NAME }}
             org.opencontainers.image.source=https://github.com/${{ env.REPO }}/tree/main/${{ env.IMAGE_NAME }}
@@ -65,6 +65,7 @@ jobs:
         env:
           BUILD_VERSION: ${{ steps.meta.outputs.sha }}
           BUILD_DATE: ${{ github.event.repository.updated_at }}
+          BUILD_ENVIRONMENT: production
         with:
           context: .
           file: ${{ env.DOCKERFILE}}
