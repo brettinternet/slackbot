@@ -80,6 +80,16 @@ func Flags() []cli.Flag {
 			Value:   http.DefaultServerPort,
 			Sources: cli.EnvVars("SERVER_PORT"),
 		},
+		&cli.StringSliceFlag{
+			Name:    "slack-preferred-users",
+			Usage:   "Preference toward users.",
+			Sources: cli.EnvVars("SLACK_PREFERRED_USERS"),
+		},
+		&cli.StringSliceFlag{
+			Name:    "slack-preferred-channels",
+			Usage:   "Channels to automatically join.",
+			Sources: cli.EnvVars("SLACK_PREFERRED_CHANNELS"),
+		},
 		&cli.StringFlag{
 			Name:    "slack-obituary-notify-channel",
 			Usage:   "Channel name to notify when a user is deleted from the Slack organization.",

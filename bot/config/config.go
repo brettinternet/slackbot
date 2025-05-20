@@ -15,6 +15,7 @@ import (
 	"slackbot.arpa/bot/http"
 	"slackbot.arpa/bot/obituary"
 	"slackbot.arpa/bot/slack"
+	"slackbot.arpa/bot/vibecheck"
 )
 
 type Feature string
@@ -103,6 +104,8 @@ func (l BuildOpts) MakeConfig(cmd *cli.Command) (Config, error) {
 		SlackTokenFile:           cmd.String("slack-token-file"),
 		SlackSigningSecret:       cmd.String("slack-signing-secret"),
 		SlackSigningSecretFile:   cmd.String("slack-signing-secret-file"),
+		PreferredUsers:           cmd.StringSlice("slack-preferred-users"),
+		PreferredChannels:        cmd.StringSlice("slack-preferred-channels"),
 		ObituaryNotifyChannel:    cmd.String("slack-obituary-notify-channel"),
 		SlackEventsPath:          cmd.String("slack-events-path"),
 		SlackResponsesFile:       cmd.String("slack-responses-file"),
@@ -125,6 +128,8 @@ type configOpts struct {
 	SlackTokenFile           string
 	SlackSigningSecret       string
 	SlackSigningSecretFile   string
+	PreferredUsers           []string
+	PreferredChannels        []string
 	ObituaryNotifyChannel    string
 	SlackEventsPath          string
 	SlackResponsesFile       string
@@ -141,6 +146,7 @@ type Config struct {
 	Slack       slack.Config
 	Obituary    obituary.Config
 	Chat        chat.Config
+	Vibecheck   vibecheck.Config
 }
 
 func newConfig(opts configOpts) (Config, error) {
@@ -208,17 +214,22 @@ func newConfig(opts configOpts) (Config, error) {
 			SlackEventPath: opts.SlackEventsPath,
 		},
 		Slack: slack.Config{
-			Token:         slackToken,
-			SigningSecret: slackSigningSecret,
-			Debug:         false,
+			Token:             slackToken,
+			SigningSecret:     slackSigningSecret,
+			Debug:             false,
+			PreferredChannels: opts.PreferredChannels,
 		},
 		Obituary: obituary.Config{
 			NotifyChannel: opts.ObituaryNotifyChannel,
 			DataDir:       dataDir,
 		},
 		Chat: chat.Config{
-			Responses: responses,
-			UseRegexp: true,
+			Responses:      responses,
+			UseRegexp:      true,
+			PreferredUsers: opts.PreferredUsers,
+		},
+		Vibecheck: vibecheck.Config{
+			PreferredUsers: opts.PreferredUsers,
 		},
 	}, nil
 }

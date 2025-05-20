@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -17,26 +18,32 @@ const eventChannelSize = 100
 
 var pattern = regexp.MustCompile(`(?i).*vibe.*`)
 
+type Config struct {
+	PreferredUsers []string
+}
+
 // Vibecheck handles responding to messages to verify the users vibe
 type Vibecheck struct {
 	log         *zap.Logger
+	config      Config
 	client      *slack.Client
 	isConnected atomic.Bool
 	stopCh      chan struct{}
 	eventsCh    chan slackevents.EventsAPIEvent
 }
 
-// ProcessorType returns a description of the processor type
-func (c *Vibecheck) ProcessorType() string {
-	return "Vibecheck"
-}
-
-func NewVibecheck(log *zap.Logger) *Vibecheck {
+func NewVibecheck(log *zap.Logger, config Config) *Vibecheck {
 	return &Vibecheck{
 		log:      log,
+		config:   config,
 		stopCh:   make(chan struct{}),
 		eventsCh: make(chan slackevents.EventsAPIEvent, eventChannelSize),
 	}
+}
+
+// ProcessorType returns a description of the processor type
+func (c *Vibecheck) ProcessorType() string {
+	return "Vibecheck"
 }
 
 // Start initializes the Vibecheck feature with a Slack client
@@ -131,32 +138,35 @@ func (c *Vibecheck) handleMessageEvent(ctx context.Context, ev *slackevents.Mess
 		}
 
 		passed := randomBool(weight)
-		if !passed {
-			if err := c.client.KickUserFromConversationContext(ctx, ev.Channel, ev.User); err != nil {
-				c.log.Error("Failed to kick user from channel",
-					zap.String("channel", ev.Channel),
-					zap.String("user", ev.User),
-					zap.Error(err),
-				)
-			} else {
-				c.log.Info("User kicked from channel due to low vibe.",
-					zap.String("channel", ev.Channel),
-					zap.String("user", ev.User),
-				)
-			}
-		}
 		response := randomResponse(passed)
 		_, _, err := c.client.PostMessageContext(
 			ctx,
 			ev.Channel,
 			slack.MsgOptionText(response, false),
-			slack.MsgOptionAsUser(true),
+			slack.MsgOptionAsUser(true), // legacy only
 		)
 		if err != nil {
 			c.log.Error("Failed to post response",
 				zap.String("channel", ev.Channel),
 				zap.Error(err),
 			)
+		}
+
+		if !passed && !slices.Contains(c.config.PreferredUsers, ev.User) {
+			time.AfterFunc(5*time.Second, func() {
+				if err := c.client.KickUserFromConversationContext(ctx, ev.Channel, ev.User); err != nil {
+					c.log.Error("Failed to kick user from channel",
+						zap.String("channel", ev.Channel),
+						zap.String("user", ev.User),
+						zap.Error(err),
+					)
+				} else {
+					c.log.Info("User kicked from channel due to low vibe.",
+						zap.String("channel", ev.Channel),
+						zap.String("user", ev.User),
+					)
+				}
+			})
 		}
 	}
 }

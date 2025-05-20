@@ -23,8 +23,9 @@ type Response struct {
 
 // Config defines the configuration for the Chat feature
 type Config struct {
-	Responses []Response
-	UseRegexp bool
+	Responses      []Response
+	UseRegexp      bool
+	PreferredUsers []string
 }
 
 // Chat handles responding to messages based on configured patterns

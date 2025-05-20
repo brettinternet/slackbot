@@ -64,6 +64,7 @@ func deleteMessagesFromChannel(ctx context.Context, cmd *cli.Command, s *Bot) er
 	params := &slack.GetConversationHistoryParameters{
 		ChannelID: f.Channel,
 		Limit:     1000, // Maximum allowed by Slack API
+		Inclusive: true,
 	}
 
 	var messagesDeleted int
@@ -75,8 +76,8 @@ func deleteMessagesFromChannel(ctx context.Context, cmd *cli.Command, s *Bot) er
 		}
 
 		for _, msg := range history.Messages {
-			// Check if message was sent by the bot
-			if msg.User == botUserID || msg.BotID != "" {
+			// Won't delete messages sent by msg.User == "USLACKBOT" 😢
+			if msg.User == botUserID || msg.BotID != "" || msg.User == "USLACKBOT" {
 				_, _, err := client.DeleteMessageContext(ctx, f.Channel, msg.Timestamp)
 				if err != nil {
 					s.log.Warn("Failed to delete message", zap.String("ts", msg.Timestamp), zap.Error(err))
@@ -87,12 +88,10 @@ func deleteMessagesFromChannel(ctx context.Context, cmd *cli.Command, s *Bot) er
 			}
 		}
 
-		// Check if there are more messages to fetch
 		if !history.HasMore {
 			break
 		}
 
-		// Update cursor for pagination
 		params.Cursor = history.ResponseMetaData.NextCursor
 	}
 

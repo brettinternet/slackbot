@@ -154,7 +154,7 @@ func (s *Bot) Shutdown(ctx context.Context) error {
 	// `sync /dev/stderr: inappropriate ioctl for device`
 	// https://github.com/uber-go/zap/issues/880
 	// https://github.com/uber-go/zap/issues/991#issuecomment-962098428
-	if err := s.log.Sync(); err != nil && !errors.Is(err, syscall.ENOTTY) {
+	if err := s.log.Sync(); err != nil && !errors.Is(err, syscall.ENOTTY) && !errors.Is(err, syscall.EINVAL) {
 		errs = errors.Join(errs, fmt.Errorf("sync logger: %w", err))
 	}
 	return errs

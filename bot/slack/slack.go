@@ -10,9 +10,10 @@ import (
 )
 
 type Config struct {
-	Token         string
-	SigningSecret string
-	Debug         bool
+	Token             string
+	SigningSecret     string
+	Debug             bool
+	PreferredChannels []string
 }
 
 type Slack struct {
@@ -45,6 +46,13 @@ func (s *Slack) Start(ctx context.Context) error {
 
 	if err := s.client.SetUserPresenceContext(ctx, "auto"); err != nil {
 		return fmt.Errorf("user presence auto: %w", err)
+	}
+
+	for _, channel := range s.config.PreferredChannels {
+		_, _, _, err := s.client.JoinConversationContext(ctx, channel)
+		if err != nil {
+			s.log.Error("Failed to join channel", zap.String("channel", channel), zap.Error(err))
+		}
 	}
 
 	return nil
