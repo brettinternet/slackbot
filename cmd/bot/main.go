@@ -44,17 +44,16 @@ func run(rootCtx context.Context, args []string) error {
 		return err
 	}
 
-	runCtx, runCancel := context.WithCancel(context.Background())
-	svcErr := make(chan error, 1)
-	if start != nil && *start {
-		go func() {
-			err := b.Run(runCtx)
-			svcErr <- err
-		}()
-	} else {
-		defer runCancel()
+	if start == nil || !*start {
 		return nil
 	}
+
+	runCtx, runCancel := context.WithCancel(context.Background())
+	svcErr := make(chan error, 1)
+	go func() {
+		err := b.Run(runCtx)
+		svcErr <- err
+	}()
 
 	log := b.Logger()
 	select {

@@ -1,12 +1,16 @@
 package config
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path"
 	"path/filepath"
 	"slices"
 
+	"github.com/goccy/go-yaml"
 	"github.com/urfave/cli/v3"
+	"slackbot.arpa/bot/chat"
 	"slackbot.arpa/bot/http"
 	"slackbot.arpa/bot/obituary"
 	"slackbot.arpa/bot/slack"
@@ -17,6 +21,7 @@ type Environment string
 
 const (
 	FeatureObituary Feature = "obituary"
+	FeatureTalk     Feature = "chat"
 
 	EnvironmentDevelopment Environment = "development"
 	EnvironmentProduction  Environment = "production"
@@ -42,7 +47,7 @@ func environmentFromString(s string) Environment {
 }
 
 var (
-	Features = []Feature{FeatureObituary}
+	Features = []Feature{FeatureObituary, FeatureTalk}
 )
 
 func IsFeature(f string) bool {
@@ -59,7 +64,7 @@ type BuildOpts struct {
 	BuildTime    string
 }
 
-func (l BuildOpts) MakeConfig(cmd *cli.Command) Config {
+func (l BuildOpts) MakeConfig(cmd *cli.Command) (Config, error) {
 	if l.BuildVersion == "" {
 		l.BuildVersion = "dev"
 	}
@@ -67,32 +72,40 @@ func (l BuildOpts) MakeConfig(cmd *cli.Command) Config {
 		l.BuildTime = "unknown"
 	}
 	opts := configOpts{
-		Version:               l.BuildVersion,
-		BuildTime:             l.BuildTime,
-		LogLevel:              cmd.String("log-level"),
-		Environment:           cmd.String("env"),
-		DataDir:               cmd.String("data-dir"),
-		Features:              cmd.StringSlice("features"),
-		ServerURL:             cmd.String("server-url"),
-		SlackToken:            cmd.String("slack-token"),
-		SlackTokenFile:        cmd.String("slack-token-file"),
-		ObituaryNotifyChannel: cmd.String("slack-obituary-notify-channel"),
+		Version:                l.BuildVersion,
+		BuildTime:              l.BuildTime,
+		LogLevel:               cmd.String("log-level"),
+		Environment:            cmd.String("env"),
+		DataDir:                cmd.String("data-dir"),
+		Features:               cmd.StringSlice("features"),
+		ServerURL:              cmd.String("server-url"),
+		SlackToken:             cmd.String("slack-token"),
+		SlackTokenFile:         cmd.String("slack-token-file"),
+		SlackSigningSecret:     cmd.String("slack-signing-secret"),
+		SlackSigningSecretFile: cmd.String("slack-signing-secret-file"),
+		ObituaryNotifyChannel:  cmd.String("slack-obituary-notify-channel"),
+		SlackEventsPath:        cmd.String("slack-events-path"),
+		SlackResponsesFile:     cmd.String("slack-responses-file"),
 	}
 
 	return newConfig(opts)
 }
 
 type configOpts struct {
-	Version               string
-	BuildTime             string
-	LogLevel              string
-	Environment           string
-	DataDir               string
-	Features              []string
-	ServerURL             string
-	SlackToken            string
-	SlackTokenFile        string
-	ObituaryNotifyChannel string
+	Version                string
+	BuildTime              string
+	LogLevel               string
+	Environment            string
+	DataDir                string
+	Features               []string
+	ServerURL              string
+	SlackToken             string
+	SlackTokenFile         string
+	SlackSigningSecret     string
+	SlackSigningSecretFile string
+	ObituaryNotifyChannel  string
+	SlackEventsPath        string
+	SlackResponsesFile     string
 }
 
 type Config struct {
@@ -105,9 +118,10 @@ type Config struct {
 	Server      http.Config
 	Slack       slack.Config
 	Obituary    obituary.Config
+	Chat        chat.Config
 }
 
-func newConfig(opts configOpts) Config {
+func newConfig(opts configOpts) (Config, error) {
 	var features []Feature
 	for _, f := range opts.Features {
 		if IsFeature(f) {
@@ -130,6 +144,31 @@ func newConfig(opts configOpts) Config {
 		}
 	}
 
+	slackSigningSecret := opts.SlackSigningSecret
+	if opts.SlackSigningSecretFile != "" {
+		secretBytes, err := os.ReadFile(opts.SlackSigningSecretFile)
+		if err == nil {
+			slackSigningSecret = string(secretBytes)
+		}
+	}
+
+	var responses []chat.Response
+	if opts.SlackResponsesFile != "" {
+		switch path.Ext(opts.SlackResponsesFile) {
+		case ".json":
+			if err := parseJSONFile(opts.SlackResponsesFile, &responses); err != nil {
+				return Config{}, fmt.Errorf("parse responses file: %w", err)
+			}
+		case ".yaml", ".yml":
+			if err := parseYAMLFile(opts.SlackResponsesFile, &responses); err != nil {
+				return Config{}, fmt.Errorf("parse responses file: %w", err)
+			}
+		default:
+			return Config{}, fmt.Errorf("unsupported responses file format: %s", ext)
+		}
+
+	}
+
 	return Config{
 		Version:     opts.Version,
 		BuildTime:   opts.BuildTime,
@@ -138,17 +177,23 @@ func newConfig(opts configOpts) Config {
 		DataDir:     dataDir,
 		Features:    features,
 		Server: http.Config{
-			ServerURL: opts.ServerURL,
+			ServerURL:      opts.ServerURL,
+			SlackEventPath: opts.SlackEventsPath,
 		},
 		Slack: slack.Config{
-			Token: slackToken,
-			Debug: false,
+			Token:         slackToken,
+			SigningSecret: slackSigningSecret,
+			Debug:         false,
 		},
 		Obituary: obituary.Config{
 			NotifyChannel: opts.ObituaryNotifyChannel,
 			DataDir:       dataDir,
 		},
-	}
+		Chat: chat.Config{
+			Responses: responses,
+			UseRegexp: true,
+		},
+	}, nil
 }
 
 // Relative path from the executable directory.
@@ -181,4 +226,27 @@ func Default[T comparable](val T, defaultVal T) T {
 		return defaultVal
 	}
 	return val
+}
+
+func parseJSONFile(filePath string, v interface{}) error {
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("read responses file: %w", err)
+	}
+	if err := json.Unmarshal(content, v); err == nil {
+		return fmt.Errorf("unmarshal responses: %w", err)
+	}
+	return nil
+}
+
+func parseYAMLFile(filePath string, v interface{}) error {
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("open file: %w", err)
+	}
+
+	if err := yaml.Unmarshal(content, v); err != nil {
+		return fmt.Errorf("unmarshal yaml: %w", err)
+	}
+	return nil
 }

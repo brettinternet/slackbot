@@ -333,7 +333,7 @@ func (o *Obituary) sendStartupMessage(ctx context.Context) {
 	attachment := slack.Attachment{
 		Color:      "#36a64f", // Green color
 		Title:      "Intro",
-		Text:       "🟢 *Slack Obituary Bot is now running*",
+		Text:       "🟢 *Slack user obituary feature is now running*",
 		Footer:     fmt.Sprintf("Monitoring %d users", len(o.knownUsers)),
 		FooterIcon: "https://platform.slack-edge.com/img/default_application_icon.png",
 		Ts:         json.Number(fmt.Sprintf("%d", time.Now().Unix())),

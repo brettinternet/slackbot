@@ -9,8 +9,9 @@ import (
 )
 
 type Config struct {
-	Token string
-	Debug bool
+	Token         string
+	SigningSecret string
+	Debug         bool
 }
 
 type Slack struct {
@@ -38,13 +39,20 @@ func (s *Slack) Start(ctx context.Context) error {
 	s.client = slack.New(s.config.Token, clientOpts...)
 
 	if _, err := s.client.AuthTest(); err != nil {
-		return fmt.Errorf("failed to authenticate with Slack: %w", err)
+		return fmt.Errorf("authenticate with Slack: %w", err)
+	}
+
+	if err := s.client.SetUserPresenceContext(ctx, "auto"); err != nil {
+		return fmt.Errorf("user presence auto: %w", err)
 	}
 
 	return nil
 }
 
 func (s *Slack) Stop(ctx context.Context) error {
+	if err := s.client.SetUserPresenceContext(ctx, "away"); err != nil {
+		return fmt.Errorf("user presence away: %w", err)
+	}
 	return nil
 }
 

@@ -6,7 +6,15 @@ Utilities for the workplace.
 
 Create a Slack app. From "OAuth & Permissions" in the app's menu, you can "Install to <workspace>" and then get a "Bot User OAuth Token" which is the Slack token used in this service. Add necessary scopes per feature.
 
+Manage the app via the CLI, run with `--help` to see options and valid environment variables.
+
+Required scopes: `users:write`.
+
+Requires `SLACK_TOKEN` or `SLACK_TOKEN_FILE`.
+
 ## Features
+
+Include `FEATURES=obituary`:
 
 ### Obituaries
 

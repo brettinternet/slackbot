@@ -83,6 +83,18 @@ func Flags() []cli.Flag {
 			Usage:   "Channel name to notify when a user is deleted from the Slack organization.",
 			Sources: cli.EnvVars("SLACK_OBITUARY_NOTIFY_CHANNEL"),
 		},
+		&cli.StringFlag{
+			Name:    "slack-events-path",
+			Usage:   "HTTP path for the Slack Events API endpoint.",
+			Value:   "/api/slack/events",
+			Sources: cli.EnvVars("SLACK_EVENTS_PATH"),
+		},
+		&cli.StringFlag{
+			Name:    "slack-responses-file",
+			Usage:   "Path to yaml or json file of responses definition. See default file or chat package for response definition.",
+			Value:   "./responses.json",
+			Sources: cli.EnvVars("SLACK_RESPONSES_FILE"),
+		},
 	}
 }
 
@@ -106,6 +118,31 @@ func MutuallyExclusiveFlags() []cli.MutuallyExclusiveFlags {
 						Action: func(ctx context.Context, cmd *cli.Command, v string) error {
 							if err := validateFileInput(v); err != nil {
 								return cli.Exit(fmt.Errorf("invalid slack token file: %v", err), 2)
+							}
+							return nil
+						},
+					},
+				},
+			},
+		},
+		{
+			Required: false,
+			Flags: [][]cli.Flag{
+				{
+					&cli.StringFlag{
+						Name:    "slack-signing-secret",
+						Usage:   "Slack Signing Secret for verifying events.",
+						Sources: cli.EnvVars("SLACK_SIGNING_SECRET"),
+					},
+				},
+				{
+					&cli.StringFlag{
+						Name:    "slack-signing-secret-file",
+						Usage:   "Path to Slack Signing Secret file for verifying events.",
+						Sources: cli.EnvVars("SLACK_SIGNING_SECRET_FILE"),
+						Action: func(ctx context.Context, cmd *cli.Command, v string) error {
+							if err := validateFileInput(v); err != nil {
+								return cli.Exit(fmt.Errorf("invalid slack signing secret file: %v", err), 2)
 							}
 							return nil
 						},

@@ -10,20 +10,25 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/slack-go/slack"
 	"go.uber.org/zap"
+	botSlack "slackbot.arpa/bot/slack"
 )
 
 type Config struct {
-	ServerURL string
+	ServerURL      string
+	SlackEventPath string // Path for the Slack events API endpoint
 }
 
 type Server struct {
-	log            *zap.Logger
-	config         Config
-	server         *http.Server
-	serveMux       *http.ServeMux
-	isShuttingDown atomic.Bool
-	isReady        atomic.Bool
+	log             *zap.Logger
+	config          Config
+	server          *http.Server
+	serveMux        *http.ServeMux
+	isShuttingDown  atomic.Bool
+	isReady         atomic.Bool
+	slackClient     *slack.Client
+	eventProcessors []botSlack.EventProcessor
 }
 
 func NewServer(log *zap.Logger, config Config) *Server {

@@ -10,6 +10,7 @@ require (
 )
 
 require (
+	github.com/goccy/go-yaml v1.17.1 // indirect
 	github.com/gorilla/websocket v1.4.2 // indirect
 	go.uber.org/multierr v1.10.0 // indirect
 	golang.org/x/sys v0.33.0 // indirect
