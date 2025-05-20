@@ -3,7 +3,7 @@
 version: "3"
 
 env:
-  FEATURES: obituary,chat,vibecheck
+  FEATURES: server,obituary,chat,vibecheck
   LOG_LEVEL: debug
   BUILD_VERSION: dev
   BUILD_DATE:
@@ -13,6 +13,12 @@ tasks:
   start:
     desc: Start server in development
     cmd: air
+
+  run:
+    desc: Run command
+    env:
+      FEATURES: ""
+    cmd: go run -tags=dev ./main.go {{.COMMAND | default .CLI_ARGS}}
 
   build:
     desc: Build

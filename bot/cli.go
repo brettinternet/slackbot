@@ -14,10 +14,10 @@ var currentProcessName string = filepath.Base(os.Args[0])
 
 type cmdWithArgs func(ctx context.Context, cmd *cli.Command, s *Bot) error
 
-// Wrap subcommands to inject the server dependency
-func cmdWithServer(action cmdWithArgs, server *Bot) cli.ActionFunc {
+// Wrap subcommands to inject the bot dependency
+func cmdWithBot(action cmdWithArgs, bot *Bot) cli.ActionFunc {
 	return func(ctx context.Context, cmd *cli.Command) error {
-		return action(ctx, cmd, server)
+		return action(ctx, cmd, bot)
 	}
 }
 
@@ -41,7 +41,7 @@ func NewCommandRoot(s *Bot) (*bool, *cli.Command) {
 		Usage:   "Multifunctional operating slack bot system for blah blah",
 		Version: version,
 		Before:  setup(s.Setup), // runs before any command to initialize the server
-		Action: func(ctx context.Context, c *cli.Command) error {
+		Action: func(ctx context.Context, cmd *cli.Command) error {
 			*start = true
 			return nil
 		},
@@ -51,6 +51,17 @@ func NewCommandRoot(s *Bot) (*bool, *cli.Command) {
 	}
 }
 
+// func Run(ctx context.Context, s *Bot) {
+// 	svcErr := make(chan error, 1)
+// 	go func() {
+// 		err := s.Run(ctx)
+// 		svcErr <- err
+// 	}()
+// 	return
+// }
+
 func Commands(s *Bot) []*cli.Command {
-	return []*cli.Command{}
+	return []*cli.Command{
+		newDeleteMessagesFromChannelCommand(s),
+	}
 }

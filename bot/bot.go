@@ -54,9 +54,14 @@ func (s *Bot) Setup(ctx context.Context, cmd *cli.Command) (context.Context, err
 
 	s.log = s.logger.Get()
 	s.slack = slack.NewSlack(s.log, s.config.Slack)
-	s.httpServer = http.NewServer(s.log, s.config.Server, s.slack)
 
-	s.log.Debug("Running bot with features.", zap.Any("features", s.config.Features))
+	if s.config.Features != nil {
+		s.log.Debug("Running bot with features.", zap.Any("features", s.config.Features))
+	}
+
+	if config.HasFeature(s.config.Features, config.FeatureServer) {
+		s.httpServer = http.NewServer(s.log, s.config.Server, s.slack)
+	}
 
 	if config.HasFeature(s.config.Features, config.FeatureObituary) {
 		s.obituary = obituary.NewObituary(s.log, s.config.Obituary)
@@ -73,7 +78,7 @@ func (s *Bot) Setup(ctx context.Context, cmd *cli.Command) (context.Context, err
 	return ctx, nil
 }
 
-func (s *Bot) Run(runCtx context.Context) error {
+func (s *Bot) Run(runCtx context.Context, serve bool) error {
 	if err := s.slack.Start(runCtx); err != nil {
 		return fmt.Errorf("start slack: %w", err)
 	}
@@ -83,14 +88,14 @@ func (s *Bot) Run(runCtx context.Context) error {
 		return errors.New("slack client is unavailable")
 	}
 
-	if s.chat != nil {
+	if s.chat != nil && s.httpServer != nil {
 		s.httpServer.RegisterEventProcessor(s.chat)
 		if err := s.chat.Start(runCtx, slackClient); err != nil {
 			return fmt.Errorf("start chat: %w", err)
 		}
 	}
 
-	if s.vibecheck != nil {
+	if s.vibecheck != nil && s.httpServer != nil {
 		s.httpServer.RegisterEventProcessor(s.vibecheck)
 		if err := s.vibecheck.Start(runCtx, slackClient); err != nil {
 			return fmt.Errorf("start vibecheck: %w", err)
@@ -103,10 +108,16 @@ func (s *Bot) Run(runCtx context.Context) error {
 		}
 	}
 
-	return s.httpServer.Run(runCtx)
+	if serve && s.httpServer != nil {
+		return s.httpServer.Run(runCtx)
+	}
+	return nil
 }
 
 func (s *Bot) BeginShutdown(ctx context.Context) error {
+	if s.httpServer == nil {
+		return nil
+	}
 	if err := s.httpServer.BeginShutdown(ctx); err != nil {
 		return fmt.Errorf("begin shutdown http server: %w", err)
 	}
@@ -116,8 +127,10 @@ func (s *Bot) BeginShutdown(ctx context.Context) error {
 // Shutdown resources in reverse order of the Setup/Run
 func (s *Bot) Shutdown(ctx context.Context) error {
 	var errs error
-	if err := s.httpServer.Shutdown(ctx); err != nil {
-		errs = errors.Join(errs, fmt.Errorf("shutdown http server: %w", err))
+	if s.httpServer != nil {
+		if err := s.httpServer.Shutdown(ctx); err != nil {
+			errs = errors.Join(errs, fmt.Errorf("shutdown http server: %w", err))
+		}
 	}
 	if s.obituary != nil {
 		if err := s.obituary.Stop(ctx); err != nil {

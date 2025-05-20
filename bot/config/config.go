@@ -21,6 +21,8 @@ type Feature string
 type Environment string
 
 const (
+	FeatureNone      Feature = "none"
+	FeatureServer    Feature = "server"
 	FeatureObituary  Feature = "obituary"
 	FeatureChat      Feature = "chat"
 	FeatureVibecheck Feature = "vibecheck"
@@ -55,7 +57,7 @@ func environmentFromString(s string) Environment {
 }
 
 var (
-	Features = []Feature{FeatureObituary, FeatureChat, FeatureVibecheck}
+	Features = []Feature{FeatureServer, FeatureObituary, FeatureChat, FeatureVibecheck}
 )
 
 func IsFeature(f string) bool {
@@ -88,42 +90,44 @@ func (l BuildOpts) MakeConfig(cmd *cli.Command) (Config, error) {
 		environment = EnvironmentProduction.String()
 	}
 	opts := configOpts{
-		Version:                l.BuildVersion,
-		BuildTime:              l.BuildTime,
-		LogLevel:               cmd.String("log-level"),
-		Environment:            environment,
-		DataDir:                cmd.String("data-dir"),
-		Features:               cmd.StringSlice("features"),
-		ServerHost:             cmd.String("server-host"),
-		ServerPort:             cmd.Uint32("server-port"),
-		SlackToken:             cmd.String("slack-token"),
-		SlackTokenFile:         cmd.String("slack-token-file"),
-		SlackSigningSecret:     cmd.String("slack-signing-secret"),
-		SlackSigningSecretFile: cmd.String("slack-signing-secret-file"),
-		ObituaryNotifyChannel:  cmd.String("slack-obituary-notify-channel"),
-		SlackEventsPath:        cmd.String("slack-events-path"),
-		SlackResponsesFile:     cmd.String("slack-responses-file"),
+		Version:                  l.BuildVersion,
+		BuildTime:                l.BuildTime,
+		LogLevel:                 cmd.String("log-level"),
+		Environment:              environment,
+		DataDir:                  cmd.String("data-dir"),
+		Features:                 cmd.StringSlice("features"),
+		EnableAllFeaturesOnEmpty: cmd.Bool("enable-features-on-empty"),
+		ServerHost:               cmd.String("server-host"),
+		ServerPort:               cmd.Uint32("server-port"),
+		SlackToken:               cmd.String("slack-token"),
+		SlackTokenFile:           cmd.String("slack-token-file"),
+		SlackSigningSecret:       cmd.String("slack-signing-secret"),
+		SlackSigningSecretFile:   cmd.String("slack-signing-secret-file"),
+		ObituaryNotifyChannel:    cmd.String("slack-obituary-notify-channel"),
+		SlackEventsPath:          cmd.String("slack-events-path"),
+		SlackResponsesFile:       cmd.String("slack-responses-file"),
 	}
 
 	return newConfig(opts)
 }
 
 type configOpts struct {
-	Version                string
-	BuildTime              string
-	LogLevel               string
-	Environment            string
-	DataDir                string
-	Features               []string
-	ServerHost             string
-	ServerPort             uint32
-	SlackToken             string
-	SlackTokenFile         string
-	SlackSigningSecret     string
-	SlackSigningSecretFile string
-	ObituaryNotifyChannel  string
-	SlackEventsPath        string
-	SlackResponsesFile     string
+	Version                  string
+	BuildTime                string
+	LogLevel                 string
+	Environment              string
+	DataDir                  string
+	Features                 []string
+	EnableAllFeaturesOnEmpty bool
+	ServerHost               string
+	ServerPort               uint32
+	SlackToken               string
+	SlackTokenFile           string
+	SlackSigningSecret       string
+	SlackSigningSecretFile   string
+	ObituaryNotifyChannel    string
+	SlackEventsPath          string
+	SlackResponsesFile       string
 }
 
 type Config struct {
@@ -142,9 +146,12 @@ type Config struct {
 func newConfig(opts configOpts) (Config, error) {
 	var features []Feature
 	for _, f := range opts.Features {
-		if IsFeature(f) {
+		if IsFeature(f) && f != FeatureNone.String() {
 			features = append(features, Feature(f))
 		}
+	}
+	if opts.EnableAllFeaturesOnEmpty && features == nil {
+		features = Features
 	}
 
 	dataDir := opts.DataDir
