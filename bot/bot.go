@@ -42,9 +42,11 @@ func (s *Bot) Setup(ctx context.Context, cmd *cli.Command) (context.Context, err
 		return ctx, fmt.Errorf("config setup: %w", err)
 	}
 
+	isProd := s.config.Environment == config.EnvironmentProduction
 	s.logger, err = logger.NewLogger(logger.LoggerOpts{
 		Level:        s.config.LogLevel,
-		IsProduction: s.config.Environment == config.EnvironmentProduction,
+		IsProduction: isProd,
+		JSONConsole:  isProd,
 	})
 	if err != nil {
 		return ctx, err

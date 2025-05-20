@@ -5,7 +5,6 @@ import (
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-	"golang.org/x/term"
 )
 
 type LoggerOpts struct {
@@ -33,11 +32,11 @@ func NewZapLogger(opts LoggerOpts) (*zap.Logger, zap.AtomicLevel, error) {
 
 	var cores []zapcore.Core
 	if opts.JSONConsole {
-		if consoleCore := maybeConsoleJSONEncoder(ecfg, level); consoleCore != nil {
+		if consoleCore := consoleJSONEncoder(ecfg, level); consoleCore != nil {
 			cores = append(cores, consoleCore)
 		}
 	} else {
-		if consoleCore := maybeConsoleEncoder(ecfg, level); consoleCore != nil {
+		if consoleCore := consoleEncoder(ecfg, level); consoleCore != nil {
 			cores = append(cores, consoleCore)
 		}
 	}
@@ -46,20 +45,14 @@ func NewZapLogger(opts LoggerOpts) (*zap.Logger, zap.AtomicLevel, error) {
 }
 
 // Core to write pretty output to the console
-func maybeConsoleEncoder(ecfg zapcore.EncoderConfig, level zap.AtomicLevel) zapcore.Core {
-	if !isTTY() {
-		return nil
-	}
+func consoleEncoder(ecfg zapcore.EncoderConfig, level zap.AtomicLevel) zapcore.Core {
 	ecfg.EncodeLevel = zapcore.CapitalColorLevelEncoder
 	consoleEncoder := zapcore.NewConsoleEncoder(ecfg)
 	return zapcore.NewCore(consoleEncoder, zapcore.AddSync(os.Stdout), level)
 }
 
 // Core to write only JSON to the console
-func maybeConsoleJSONEncoder(ecfg zapcore.EncoderConfig, level zap.AtomicLevel) zapcore.Core {
-	if !isTTY() {
-		return nil
-	}
+func consoleJSONEncoder(ecfg zapcore.EncoderConfig, level zap.AtomicLevel) zapcore.Core {
 	consoleEncoder := zapcore.NewJSONEncoder(ecfg)
 	return zapcore.NewCore(consoleEncoder, zapcore.AddSync(os.Stdout), level)
 }
@@ -97,8 +90,4 @@ func (l Logger) SetLevelStr(input string) error {
 	}
 	l.level.SetLevel(level.Level())
 	return nil
-}
-
-func isTTY() bool {
-	return term.IsTerminal(int(os.Stdout.Fd()))
 }
