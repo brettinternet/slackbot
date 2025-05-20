@@ -1,0 +1,7 @@
+---
+- Pattern: hello
+  Message: Hello there! How can I help you today?
+  IsRegexp: false
+- Pattern: thanks|thank you
+  Message: You're welcome!
+  IsRegexp: true

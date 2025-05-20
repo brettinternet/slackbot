@@ -20,7 +20,8 @@ services:
       dockerfile: ./docker/bot/Dockerfile
     environment:
       <<: *environment
-      SERVER_URL: http://0.0.0.0:4200
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: 4200
       FEATURES: obituary
       ENVIRONMENT: development
       DATA_DIR: /app/data

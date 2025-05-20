@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/urfave/cli/v3"
+	"slackbot.arpa/bot/http"
 )
 
 func Flags() []cli.Flag {
@@ -67,16 +68,16 @@ func Flags() []cli.Flag {
 			},
 		},
 		&cli.StringFlag{
-			Name:    "server-url",
-			Usage:   "Server URL",
-			Value:   "http://localhost:4200",
-			Sources: cli.EnvVars("SERVER_URL"),
-			Action: func(ctx context.Context, cmd *cli.Command, v string) error {
-				if err := validateURLInput(v); err != nil {
-					return cli.Exit(fmt.Errorf("invalid server URL: %v", err), 2)
-				}
-				return nil
-			},
+			Name:    "server-host",
+			Usage:   "Server host",
+			Value:   "localhost",
+			Sources: cli.EnvVars("SERVER_HOST"),
+		},
+		&cli.Uint32Flag{
+			Name:    "server-port",
+			Usage:   "Server port",
+			Value:   http.DefaultServerPort,
+			Sources: cli.EnvVars("SERVER_PORT"),
 		},
 		&cli.StringFlag{
 			Name:    "slack-obituary-notify-channel",

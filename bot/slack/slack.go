@@ -3,6 +3,7 @@ package slack
 import (
 	"context"
 	"fmt"
+	"net/http"
 
 	"github.com/slack-go/slack"
 	"go.uber.org/zap"
@@ -58,4 +59,22 @@ func (s *Slack) Stop(ctx context.Context) error {
 
 func (s *Slack) Client() *slack.Client {
 	return s.client
+}
+
+// VerifyRequest validates the request body against the Slack signing secret
+func (s *Slack) VerifyRequest(header http.Header, body []byte) error {
+	sv, err := slack.NewSecretsVerifier(header, s.config.SigningSecret)
+	if err != nil {
+		return fmt.Errorf("create secrets verifier: %w", err)
+	}
+
+	if _, err := sv.Write(body); err != nil {
+		return fmt.Errorf("write to secrets verifier: %w", err)
+	}
+
+	if err := sv.Ensure(); err != nil {
+		return fmt.Errorf("verify request signature: %w", err)
+	}
+
+	return nil
 }

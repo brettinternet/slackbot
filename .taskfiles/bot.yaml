@@ -3,7 +3,7 @@
 version: "3"
 
 env:
-  FEATURES: obituary
+  FEATURES: obituary,chat,vibecheck
   LOG_LEVEL: debug
   BUILD_VERSION: dev
   BUILD_DATE:

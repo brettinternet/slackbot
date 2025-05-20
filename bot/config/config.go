@@ -20,8 +20,9 @@ type Feature string
 type Environment string
 
 const (
-	FeatureObituary Feature = "obituary"
-	FeatureTalk     Feature = "chat"
+	FeatureObituary  Feature = "obituary"
+	FeatureChat      Feature = "chat"
+	FeatureVibecheck Feature = "vibecheck"
 
 	EnvironmentDevelopment Environment = "development"
 	EnvironmentProduction  Environment = "production"
@@ -47,7 +48,7 @@ func environmentFromString(s string) Environment {
 }
 
 var (
-	Features = []Feature{FeatureObituary, FeatureTalk}
+	Features = []Feature{FeatureObituary, FeatureChat, FeatureVibecheck}
 )
 
 func IsFeature(f string) bool {
@@ -78,7 +79,8 @@ func (l BuildOpts) MakeConfig(cmd *cli.Command) (Config, error) {
 		Environment:            cmd.String("env"),
 		DataDir:                cmd.String("data-dir"),
 		Features:               cmd.StringSlice("features"),
-		ServerURL:              cmd.String("server-url"),
+		ServerHost:             cmd.String("server-host"),
+		ServerPort:             cmd.Uint32("server-port"),
 		SlackToken:             cmd.String("slack-token"),
 		SlackTokenFile:         cmd.String("slack-token-file"),
 		SlackSigningSecret:     cmd.String("slack-signing-secret"),
@@ -98,7 +100,8 @@ type configOpts struct {
 	Environment            string
 	DataDir                string
 	Features               []string
-	ServerURL              string
+	ServerHost             string
+	ServerPort             uint32
 	SlackToken             string
 	SlackTokenFile         string
 	SlackSigningSecret     string
@@ -154,7 +157,8 @@ func newConfig(opts configOpts) (Config, error) {
 
 	var responses []chat.Response
 	if opts.SlackResponsesFile != "" {
-		switch path.Ext(opts.SlackResponsesFile) {
+		ext := path.Ext(opts.SlackResponsesFile)
+		switch ext {
 		case ".json":
 			if err := parseJSONFile(opts.SlackResponsesFile, &responses); err != nil {
 				return Config{}, fmt.Errorf("parse responses file: %w", err)
@@ -177,7 +181,8 @@ func newConfig(opts configOpts) (Config, error) {
 		DataDir:     dataDir,
 		Features:    features,
 		Server: http.Config{
-			ServerURL:      opts.ServerURL,
+			ServerHost:     opts.ServerHost,
+			ServerPort:     opts.ServerPort,
 			SlackEventPath: opts.SlackEventsPath,
 		},
 		Slack: slack.Config{
@@ -233,7 +238,7 @@ func parseJSONFile(filePath string, v interface{}) error {
 	if err != nil {
 		return fmt.Errorf("read responses file: %w", err)
 	}
-	if err := json.Unmarshal(content, v); err == nil {
+	if err := json.Unmarshal(content, v); err != nil {
 		return fmt.Errorf("unmarshal responses: %w", err)
 	}
 	return nil

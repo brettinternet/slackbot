@@ -14,12 +14,20 @@ Requires `SLACK_TOKEN` or `SLACK_TOKEN_FILE`.
 
 ## Features
 
-Include `FEATURES=obituary`:
+Include `FEATURES=obituary,chat`:
 
-### Obituaries
+### Obituary
 
 Watches the workspace users to observe which users are no longer present.
 
 Requires scopes: `channels:history`, `groups:history` and `chat:write`.
 
 Requires `SLACK_OBITUARY_NOTIFY_CHANNEL` with the channel ID.
+
+### Chat
+
+Respond to user messages.
+
+Requires scopes: ``.
+
+Requires `SLACK_SIGNING_SECRET` and configuring a public event endpoint.
