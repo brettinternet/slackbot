@@ -169,7 +169,7 @@ func (o *Obituary) fetchAllUsers(ctx context.Context) error {
 
 	// Update our known users map
 	for _, user := range users {
-		if user.Deleted {
+		if user.Deleted || user.IsBot {
 			continue
 		}
 		o.knownUsers[user.ID] = &user
