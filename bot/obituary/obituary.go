@@ -261,7 +261,12 @@ func (o *Obituary) notifyUserDeleted(ctx context.Context, user *slack.User) {
 	} else {
 		identity = fmt.Sprintf("*%s*", user.Name)
 	}
-	message := fmt.Sprintf("User %s has been deleted from the Slack organization.", identity)
+	userTitle := "User"
+	if user.IsBot {
+		userTitle = "Bot"
+	}
+
+	message := fmt.Sprintf("%s %s has been deleted from the Slack organization.", userTitle, identity)
 	profileLink := fmt.Sprintf("https://slack.com/team/%s", user.ID)
 	actions := []slack.AttachmentAction{
 		{
@@ -276,10 +281,6 @@ func (o *Obituary) notifyUserDeleted(ctx context.Context, user *slack.User) {
 			Text: "View LinkedIn",
 			URL:  linkedinURL(user.Profile.RealName),
 		})
-	}
-	userTitle := "User"
-	if user.IsBot {
-		userTitle = "Bot"
 	}
 	attachment := slack.Attachment{
 		Color:      "#FF5733", // Red-orange color
