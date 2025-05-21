@@ -323,7 +323,7 @@ func (o *Obituary) sendStartupMessage(ctx context.Context) {
 
 		history, err := o.slack.GetConversationHistoryContext(ctx, &slack.GetConversationHistoryParameters{
 			ChannelID: o.notifyChannel,
-			Limit:     10,
+			Limit:     100,
 		})
 		if err != nil {
 			o.log.Error("Failed to get channel history, sending notification anyway",
