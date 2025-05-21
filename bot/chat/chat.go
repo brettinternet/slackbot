@@ -16,9 +16,10 @@ const eventChannelSize = 100
 
 // Response defines a pattern to match and the corresponding response
 type Response struct {
-	Pattern  string // Can be a plain text or a regular expression
-	Message  string // The message to respond with
-	IsRegexp bool   // Whether the pattern is a regular expression
+	Pattern   string   // Can be a plain text or a regular expression
+	Message   string   // The message to respond with
+	Reactions []string // Reactions to add to the message
+	IsRegexp  bool     // Whether the pattern is a regular expression
 }
 
 // Config defines the configuration for the Chat feature
@@ -117,13 +118,13 @@ func (c *Chat) handleEvents(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case event := <-c.eventsCh:
-			c.processEvent(event)
+			c.processEvent(ctx, event)
 		}
 	}
 }
 
 // processEvent handles a single Slack event
-func (c *Chat) processEvent(event slackevents.EventsAPIEvent) {
+func (c *Chat) processEvent(ctx context.Context, event slackevents.EventsAPIEvent) {
 	switch event.Type {
 	case slackevents.CallbackEvent:
 		innerEvent := event.InnerEvent
@@ -133,13 +134,13 @@ func (c *Chat) processEvent(event slackevents.EventsAPIEvent) {
 			if ev.BotID != "" || ev.User == "" {
 				return
 			}
-			c.handleMessageEvent(ev)
+			c.handleMessageEvent(ctx, ev)
 		}
 	}
 }
 
 // handleMessageEvent processes a message event and responds if it matches a pattern
-func (c *Chat) handleMessageEvent(ev *slackevents.MessageEvent) {
+func (c *Chat) handleMessageEvent(ctx context.Context, ev *slackevents.MessageEvent) {
 	message := strings.TrimSpace(ev.Text)
 
 	c.log.Debug("Processing message",
@@ -147,46 +148,79 @@ func (c *Chat) handleMessageEvent(ev *slackevents.MessageEvent) {
 		zap.String("channel", ev.Channel),
 		zap.String("text", message),
 		zap.String("type", c.ProcessorType()),
+		zap.Any("responses", c.config.Responses),
 	)
 
-	// Check if the message matches any of our configured responses
 	for _, resp := range c.config.Responses {
-		var matches bool
-
+		var isMatch bool
 		if resp.IsRegexp {
 			re, exists := c.regexps[resp.Pattern]
 			if !exists {
-				continue
+				rec, err := regexp.Compile("(?i)" + resp.Pattern)
+				if err != nil {
+					c.log.Error("Failed to compile regex pattern",
+						zap.String("pattern", resp.Pattern),
+						zap.Error(err),
+					)
+					continue
+				}
+				re = rec
+				c.regexps[resp.Pattern] = re
 			}
-			matches = re.MatchString(message)
+			isMatch = re.MatchString(message)
 		} else {
-			// Case-insensitive plain text match
-			matches = strings.EqualFold(message, resp.Pattern)
+			isMatch = strings.EqualFold(message, resp.Pattern)
 		}
 
-		if matches {
+		if isMatch {
 			c.log.Info("Message matched pattern",
 				zap.String("pattern", resp.Pattern),
 				zap.String("channel", ev.Channel),
 			)
 
-			_, _, err := c.slack.PostMessage(
-				ev.Channel,
-				slack.MsgOptionText(resp.Message, false),
-				slack.MsgOptionAsUser(true),
-			)
+			if len(resp.Reactions) > 0 {
+				for _, reaction := range resp.Reactions {
+					err := c.slack.AddReactionContext(
+						ctx,
+						reaction,
+						slack.NewRefToMessage(ev.Channel, ev.TimeStamp),
+					)
+					if err != nil {
+						c.log.Error("Failed to add reaction",
+							zap.String("channel", ev.Channel),
+							zap.String("user", ev.User),
+							zap.String("reaction", reaction),
+							zap.Error(err),
+						)
+					}
+				}
+			}
 
-			if err != nil {
-				c.log.Error("Failed to post response",
-					zap.String("channel", ev.Channel),
-					zap.Error(err),
+			if resp.Message != "" {
+				_, _, err := c.slack.PostMessageContext(
+					ctx,
+					ev.Channel,
+					slack.MsgOptionText(resp.Message, false),
+					slack.MsgOptionAsUser(true),
 				)
+				if err != nil {
+					c.log.Error("Failed to post response",
+						zap.String("channel", ev.Channel),
+						zap.Error(err),
+					)
+				}
 			}
 
 			// Stop after the first match
-			break
+			return
 		}
 	}
+
+	c.log.Debug("No matching response found for message",
+		zap.String("text", message),
+		zap.String("channel", ev.Channel),
+		zap.String("type", c.ProcessorType()),
+	)
 }
 
 // AddResponse adds a new response pattern dynamically

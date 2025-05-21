@@ -2,6 +2,14 @@
 - Pattern: hello
   Message: Hello there! How can I help you today?
   IsRegexp: false
-- Pattern: thanks|thank you
+- Pattern: thanks|thank you|thx|ty
   Message: You're welcome!
   IsRegexp: true
+  Reactions: [":+1:"]
+- Pattern: .*vibe.*
+  Message: You're welcome!
+  IsRegexp: true
+  Reactions: [":ok:", ":vibecheck:"]
+- Pattern: \bok\b|\bokay\b
+  IsRegexp: true
+  Reactions: [":ok:"]
