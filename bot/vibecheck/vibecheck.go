@@ -19,6 +19,7 @@ var pattern = regexp.MustCompile(`(?i).*vibe.*`)
 
 type Config struct {
 	PreferredUsers []string
+	DataDir        string
 }
 
 // Vibecheck handles responding to messages to verify the users vibe
@@ -29,15 +30,19 @@ type Vibecheck struct {
 	isConnected atomic.Bool
 	stopCh      chan struct{}
 	eventsCh    chan slackevents.EventsAPIEvent
+	kickedUsers *kickedUsersManager
+	ticker      *time.Ticker
 }
 
 func NewVibecheck(log *zap.Logger, config Config, client *slack.Client) *Vibecheck {
 	return &Vibecheck{
-		log:      log,
-		config:   config,
-		stopCh:   make(chan struct{}),
-		eventsCh: make(chan slackevents.EventsAPIEvent, eventChannelSize),
-		slack:    client,
+		log:         log,
+		config:      config,
+		stopCh:      make(chan struct{}),
+		eventsCh:    make(chan slackevents.EventsAPIEvent, eventChannelSize),
+		slack:       client,
+		kickedUsers: newKickedUsersManager(log, config.DataDir),
+		ticker:      time.NewTicker(30 * time.Second), // Check for users to reinvite every 30 seconds
 	}
 }
 
@@ -53,6 +58,9 @@ func (c *Vibecheck) Start(ctx context.Context) error {
 	// Start listening for events in a goroutine
 	go c.handleEvents(ctx)
 
+	// Start the reinvite checker goroutine
+	go c.checkReinvites(ctx)
+
 	c.log.Debug("Vibecheck feature started successfully.")
 	return nil
 }
@@ -63,6 +71,7 @@ func (c *Vibecheck) Stop(ctx context.Context) error {
 		return nil
 	}
 
+	c.ticker.Stop()
 	close(c.stopCh)
 	c.isConnected.Store(false)
 	return nil
@@ -170,6 +179,7 @@ func (c *Vibecheck) handleMessageEvent(ctx context.Context, ev *slackevents.Mess
 						zap.Error(err),
 					)
 				} else {
+					c.kickedUsers.AddKickedUser(ev.User, ev.Channel, 5*time.Minute)
 					c.log.Info("User kicked from channel due to low vibe.",
 						zap.String("channel", ev.Channel),
 						zap.String("user", ev.User),
@@ -178,4 +188,48 @@ func (c *Vibecheck) handleMessageEvent(ctx context.Context, ev *slackevents.Mess
 			})
 		}
 	}
+}
+
+// checkReinvites periodically checks for users to reinvite
+func (c *Vibecheck) checkReinvites(ctx context.Context) {
+	for {
+		select {
+		case <-c.stopCh:
+			return
+		case <-ctx.Done():
+			return
+		case <-c.ticker.C:
+			c.processReinvites(ctx)
+		}
+	}
+}
+
+// processReinvites handles reinviting users who have been kicked
+func (c *Vibecheck) processReinvites(ctx context.Context) {
+	usersToReinvite := c.kickedUsers.GetUsersToReinvite()
+
+	for _, user := range usersToReinvite {
+		_, err := c.slack.InviteUsersToConversationContext(
+			ctx,
+			user.ChannelID,
+			user.UserID,
+		)
+
+		if err != nil {
+			c.log.Error("Failed to reinvite user to channel",
+				zap.String("channel", user.ChannelID),
+				zap.String("user", user.UserID),
+				zap.Error(err),
+			)
+		} else {
+			c.log.Info("Successfully reinvited user to channel after timeout",
+				zap.String("channel", user.ChannelID),
+				zap.String("user", user.UserID),
+				zap.Time("kicked_at", user.KickedAt),
+				zap.Time("reinvited_at", time.Now()),
+			)
+		}
+	}
+
+	c.kickedUsers.CleanupReinvitedUsers()
 }

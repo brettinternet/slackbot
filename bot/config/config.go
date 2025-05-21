@@ -202,6 +202,7 @@ func newConfig(opts configOpts) (Config, error) {
 		},
 		Vibecheck: vibecheck.Config{
 			PreferredUsers: opts.PreferredUsers,
+			DataDir:        dataDir,
 		},
 	}, nil
 }
