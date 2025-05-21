@@ -42,7 +42,7 @@ func NewVibecheck(log *zap.Logger, config Config, client *slack.Client) *Vibeche
 		eventsCh:    make(chan slackevents.EventsAPIEvent, eventChannelSize),
 		slack:       client,
 		kickedUsers: newKickedUsersManager(log, config.DataDir),
-		ticker:      time.NewTicker(30 * time.Second), // Check for users to reinvite every 30 seconds
+		ticker:      time.NewTicker(10 * time.Second), // Check more frequently during debugging
 	}
 }
 
@@ -171,6 +171,9 @@ func (c *Vibecheck) handleMessageEvent(ctx context.Context, ev *slackevents.Mess
 		}
 
 		if !passed && !slices.Contains(c.config.PreferredUsers, ev.User) && !slices.Contains(c.config.PreferredUsers, ev.Username) {
+			// Add user to the kicked users list with a 5-minute timeout
+			c.kickedUsers.AddKickedUser(ev.User, ev.Channel, 5*time.Minute)
+
 			time.AfterFunc(5*time.Second, func() {
 				if err := c.slack.KickUserFromConversationContext(ctx, ev.Channel, ev.User); err != nil {
 					c.log.Error("Failed to kick user from channel",
@@ -179,7 +182,6 @@ func (c *Vibecheck) handleMessageEvent(ctx context.Context, ev *slackevents.Mess
 						zap.Error(err),
 					)
 				} else {
-					c.kickedUsers.AddKickedUser(ev.User, ev.Channel, 5*time.Minute)
 					c.log.Info("User kicked from channel due to low vibe.",
 						zap.String("channel", ev.Channel),
 						zap.String("user", ev.User),
@@ -192,13 +194,17 @@ func (c *Vibecheck) handleMessageEvent(ctx context.Context, ev *slackevents.Mess
 
 // checkReinvites periodically checks for users to reinvite
 func (c *Vibecheck) checkReinvites(ctx context.Context) {
+	c.log.Debug("Starting reinvite checker routine")
 	for {
 		select {
 		case <-c.stopCh:
+			c.log.Debug("Reinvite checker routine stopped")
 			return
 		case <-ctx.Done():
+			c.log.Debug("Reinvite checker routine context done")
 			return
 		case <-c.ticker.C:
+			c.log.Debug("Checking for users to reinvite")
 			c.processReinvites(ctx)
 		}
 	}
@@ -208,7 +214,18 @@ func (c *Vibecheck) checkReinvites(ctx context.Context) {
 func (c *Vibecheck) processReinvites(ctx context.Context) {
 	usersToReinvite := c.kickedUsers.GetUsersToReinvite()
 
+	if len(usersToReinvite) > 0 {
+		c.log.Debug("Found users to reinvite", zap.Int("count", len(usersToReinvite)))
+	}
+
 	for _, user := range usersToReinvite {
+		c.log.Debug("Attempting to reinvite user",
+			zap.String("user_id", user.UserID),
+			zap.String("channel_id", user.ChannelID),
+			zap.Time("kicked_at", user.KickedAt),
+			zap.Time("reinvite_at", user.ReinviteAt),
+		)
+
 		_, err := c.slack.InviteUsersToConversationContext(
 			ctx,
 			user.ChannelID,

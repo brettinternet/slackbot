@@ -30,15 +30,27 @@ type kickedUsersManager struct {
 	mu       sync.RWMutex
 }
 
-// NewKickedUsersManager creates a new manager for kicked users
+// newKickedUsersManager creates a new manager for kicked users
 func newKickedUsersManager(log *zap.Logger, dataDir string) *kickedUsersManager {
 	filePath := filepath.Join(dataDir, kickedUsersFile)
+
+	log.Debug("Initializing kicked users manager",
+		zap.String("data_dir", dataDir),
+		zap.String("file_path", filePath),
+	)
 
 	manager := &kickedUsersManager{
 		log:      log,
 		users:    make(map[string]kickedUser),
 		dataDir:  dataDir,
 		filePath: filePath,
+	}
+
+	// Ensure data directory exists
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		log.Error("Failed to create data directory", zap.Error(err), zap.String("path", dataDir))
+	} else {
+		log.Debug("Ensured data directory exists", zap.String("path", dataDir))
 	}
 
 	manager.loadFromDisk()
@@ -57,6 +69,13 @@ func (m *kickedUsersManager) AddKickedUser(userID, channelID string, timeout tim
 
 	now := time.Now()
 	key := m.generateKey(userID, channelID)
+
+	m.log.Debug("Adding user to kicked users list",
+		zap.String("user_id", userID),
+		zap.String("channel_id", channelID),
+		zap.Time("kicked_at", now),
+		zap.Time("reinvite_at", now.Add(timeout)),
+	)
 
 	m.users[key] = kickedUser{
 		UserID:     userID,
@@ -77,8 +96,19 @@ func (m *kickedUsersManager) GetUsersToReinvite() []kickedUser {
 	var usersToReinvite []kickedUser
 	now := time.Now()
 
+	m.log.Debug("Checking for users to reinvite",
+		zap.Int("total_kicked_users", len(m.users)),
+	)
+
 	for key, user := range m.users {
 		if !user.Reinvited && now.After(user.ReinviteAt) {
+			m.log.Debug("Found user ready for reinvite",
+				zap.String("user_id", user.UserID),
+				zap.String("channel_id", user.ChannelID),
+				zap.Time("kicked_at", user.KickedAt),
+				zap.Time("reinvite_at", user.ReinviteAt),
+			)
+
 			usersToReinvite = append(usersToReinvite, user)
 
 			// Mark as reinvited
@@ -101,15 +131,18 @@ func (m *kickedUsersManager) CleanupReinvitedUsers() {
 
 	oneDayAgo := time.Now().Add(-24 * time.Hour)
 	needSave := false
+	removedCount := 0
 
 	for key, user := range m.users {
 		if user.Reinvited && user.ReinviteAt.Before(oneDayAgo) {
 			delete(m.users, key)
 			needSave = true
+			removedCount++
 		}
 	}
 
 	if needSave {
+		m.log.Debug("Cleaned up old reinvited users", zap.Int("removed_count", removedCount))
 		m.saveToDisk()
 	}
 }
@@ -125,6 +158,11 @@ func (m *kickedUsersManager) saveToDisk() {
 	err = os.WriteFile(m.filePath, data, 0644)
 	if err != nil {
 		m.log.Error("Failed to save kicked users data", zap.Error(err), zap.String("path", m.filePath))
+	} else {
+		m.log.Debug("Saved kicked users data to disk",
+			zap.String("path", m.filePath),
+			zap.Int("num_users", len(m.users)),
+		)
 	}
 }
 
@@ -134,6 +172,8 @@ func (m *kickedUsersManager) loadFromDisk() {
 	if err != nil {
 		if !os.IsNotExist(err) {
 			m.log.Error("Failed to read kicked users data", zap.Error(err), zap.String("path", m.filePath))
+		} else {
+			m.log.Debug("No kicked users file exists yet", zap.String("path", m.filePath))
 		}
 		return
 	}
@@ -141,5 +181,10 @@ func (m *kickedUsersManager) loadFromDisk() {
 	err = json.Unmarshal(data, &m.users)
 	if err != nil {
 		m.log.Error("Failed to unmarshal kicked users data", zap.Error(err))
+	} else {
+		m.log.Debug("Loaded kicked users data from disk",
+			zap.String("path", m.filePath),
+			zap.Int("num_users", len(m.users)),
+		)
 	}
 }
