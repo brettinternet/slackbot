@@ -6,69 +6,20 @@ import (
 	"time"
 )
 
-// TODO: move to configuration file
-
 var goodEmojis = []string{
-	":letsgo:",
 	":ok:",
-	":gigachad:",
-	":white_check_mark:",
-	":letsgo:",
-	":sniffa:",
-	":catjam:",
-	":bedge:",
 }
 
 var badEmojis = []string{
-	":diesofcringe:",
 	":no_entry:",
-	":alert:",
-	":sadcat:",
-	":sadcowboy:",
-	":pensive-cowboy-bread:",
-	":cry:",
-	":sadge:",
-	":vibecheck:",
 }
 
 var goodText = []string{
 	"V I B E C H E C K - P A S S E D",
-	"V I B E C H E C K - P A S S E D",
-	"V I B E C H E C K - P A S S E D",
-	"V I B E C H E C K - P A S S E D",
-	"V I B E C H E C K - F L A W L E S S",
-	"V I B E C H E C K - P A S S",
-	"V I B E - I S - G O O D",
-	"L G T M",
-	":ok:V:ok:I:ok:B:ok:E:ok:",
-	"vibes are :ok:",
-	":eye: :biting_lip: :eye:",
-	"h e l l o   v i b e   i ' m   b o t",
 }
 
 var badText = []string{
 	"V I B E C H E C K - F A I L E D",
-	"V I B E C H E C K - F A I L E D",
-	"V I B E C H E C K - F A I L E D",
-	"BAD!",
-	"really really not great",
-	"noooooooo",
-	"V I B E C H E C K - F A I L E D :no_entry:",
-	"nah, not the vibe",
-	"V I B E  T A R I F F  U N P A I D",
-	":middle_finger:",
-}
-
-func goodResponse() string {
-	e := randomString(goodEmojis)
-	t := randomString(goodText)
-	return fmt.Sprintf("%s %s %s %s %s %s %s", e, e, e, t, e, e, e)
-}
-
-func badResponse() string {
-	e := randomString(badEmojis)
-	t := randomString(badText)
-	return fmt.Sprintf("%s %s %s %s %s %s %s", e, e, e, t, e, e, e)
 }
 
 func randomString(values []string) string {
@@ -84,9 +35,21 @@ func randomBool(weight float64) bool {
 	return rand.Float64() < weight
 }
 
-func randomResponse(passed bool) string {
-	if passed {
-		return goodResponse()
+func randomResponse(passed bool, c FileConfig) string {
+	emojis := withDefault(c.GoodReactions, goodEmojis)
+	texts := withDefault(c.GoodText, goodEmojis)
+	if !passed {
+		emojis = withDefault(c.BadReactions, badEmojis)
+		texts = withDefault(c.BadText, badText)
 	}
-	return badResponse()
+	e := randomString(emojis)
+	t := randomString(texts)
+	return fmt.Sprintf("%s %s %s %s %s %s %s", e, e, e, t, e, e, e)
+}
+
+func withDefault(values, defaultValues []string) []string {
+	if len(values) == 0 {
+		return defaultValues
+	}
+	return values
 }

@@ -18,15 +18,16 @@ import (
 )
 
 type Bot struct {
-	BuildOpts config.BuildOpts
-	logger    logger.Logger
-	log       *zap.Logger
-	config    config.Config
-	http      *http.Server
-	slack     *slack.Slack
-	obituary  *obituary.Obituary
-	chat      *chat.Chat
-	vibecheck *vibecheck.Vibecheck
+	BuildOpts     config.BuildOpts
+	logger        logger.Logger
+	log           *zap.Logger
+	config        config.Config
+	http          *http.Server
+	slack         *slack.Slack
+	obituary      *obituary.Obituary
+	chat          *chat.Chat
+	vibecheck     *vibecheck.Vibecheck
+	configWatcher *config.ConfigWatcher
 }
 
 func NewBot(buildOpts config.BuildOpts) *Bot {
@@ -53,6 +54,15 @@ func (s *Bot) Setup(ctx context.Context, cmd *cli.Command) (context.Context, err
 	}
 
 	s.log = s.logger.Get()
+
+	// Initialize config configWatcher if config file is specified
+	if s.config.ConfigFile != "" {
+		s.configWatcher, err = config.NewConfigWatcher(s.log, s.config.ConfigFile)
+		if err != nil {
+			return ctx, fmt.Errorf("config configWatcher setup: %w", err)
+		}
+	}
+
 	s.slack = slack.NewSlack(s.log, s.config.Slack)
 
 	if s.config.Features != nil {
@@ -84,6 +94,29 @@ func (s *Bot) Setup(ctx context.Context, cmd *cli.Command) (context.Context, err
 func (s *Bot) Run(runCtx context.Context) error {
 	if err := s.slack.Start(runCtx); err != nil {
 		return fmt.Errorf("start slack: %w", err)
+	}
+
+	// Start the config configWatcher if we have one
+	if s.configWatcher != nil {
+		// Set up callbacks for each module that needs to reload config
+		if s.chat != nil {
+			s.configWatcher.AddCallback("chat", func(c config.FileConfig) {
+				s.log.Info("Updating chat configuration")
+				s.chat.SetConfig(c.Chat)
+			})
+		}
+
+		if s.vibecheck != nil {
+			s.configWatcher.AddCallback("vibecheck", func(c config.FileConfig) {
+				s.log.Info("Updating vibecheck configuration")
+				s.vibecheck.SetConfig(c.Vibecheck)
+			})
+		}
+
+		// Start the configWatcher
+		if err := s.configWatcher.Start(runCtx); err != nil {
+			return fmt.Errorf("start config configWatcher: %w", err)
+		}
 	}
 
 	if s.chat != nil && s.http != nil {
@@ -141,6 +174,9 @@ func (s *Bot) Shutdown(ctx context.Context) error {
 		if err := s.vibecheck.Stop(ctx); err != nil {
 			errs = errors.Join(errs, fmt.Errorf("stop vibecheck: %w", err))
 		}
+	}
+	if s.configWatcher != nil {
+		s.configWatcher.Stop()
 	}
 	if err := s.slack.Stop(ctx); err != nil {
 		errs = errors.Join(errs, fmt.Errorf("stop slack: %w", err))

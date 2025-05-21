@@ -102,7 +102,7 @@ func (l BuildOpts) MakeConfig(cmd *cli.Command) (Config, error) {
 		PreferredChannels:      cmd.StringSlice("slack-preferred-channels"),
 		ObituaryNotifyChannel:  cmd.String("slack-obituary-notify-channel"),
 		SlackEventsPath:        cmd.String("slack-events-path"),
-		SlackResponsesFile:     cmd.String("slack-responses-file"),
+		ConfigFile:             cmd.String("config-file"),
 	}
 
 	return newConfig(opts)
@@ -125,7 +125,7 @@ type configOpts struct {
 	PreferredChannels      []string
 	ObituaryNotifyChannel  string
 	SlackEventsPath        string
-	SlackResponsesFile     string
+	ConfigFile             string
 }
 
 type Config struct {
@@ -134,6 +134,7 @@ type Config struct {
 	LogLevel    string
 	Environment Environment
 	DataDir     string
+	ConfigFile  string
 	Features    []Feature // Feature flags
 	Server      http.Config
 	Slack       slack.Config
@@ -180,6 +181,7 @@ func newConfig(opts configOpts) (Config, error) {
 		Environment: environmentFromString(opts.Environment),
 		DataDir:     dataDir,
 		Features:    features,
+		ConfigFile:  opts.ConfigFile,
 		Server: http.Config{
 			ServerHost:     opts.ServerHost,
 			ServerPort:     opts.ServerPort,
@@ -196,8 +198,6 @@ func newConfig(opts configOpts) (Config, error) {
 			DataDir:       dataDir,
 		},
 		Chat: chat.Config{
-			ResponsesFile:  opts.SlackResponsesFile,
-			UseRegexp:      true,
 			PreferredUsers: opts.PreferredUsers,
 		},
 		Vibecheck: vibecheck.Config{

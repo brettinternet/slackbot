@@ -17,6 +17,13 @@ const eventChannelSize = 100
 
 var pattern = regexp.MustCompile(`(?i).*vibe.*`)
 
+type FileConfig struct {
+	GoodReactions []string
+	GoodText      []string
+	BadReactions  []string
+	BadText       []string
+}
+
 type Config struct {
 	PreferredUsers []string
 	DataDir        string
@@ -33,6 +40,7 @@ type Vibecheck struct {
 	kickedUsers *kickedUsersManager
 	ticker      *time.Ticker
 	dedupe      *messageDeduplicator
+	fileConfig  FileConfig
 }
 
 func NewVibecheck(log *zap.Logger, config Config, client *slack.Client) *Vibecheck {
@@ -168,7 +176,7 @@ func (c *Vibecheck) handleMessageEvent(ctx context.Context, ev *slackevents.Mess
 			)
 		}
 
-		response := randomResponse(passed)
+		response := randomResponse(passed, c.fileConfig)
 		_, _, err = c.slack.PostMessageContext(
 			ctx,
 			ev.Channel,
@@ -202,6 +210,13 @@ func (c *Vibecheck) handleMessageEvent(ctx context.Context, ev *slackevents.Mess
 			})
 		}
 	}
+}
+
+// SetConfig updates the vibecheck configuration with values from the centralized config
+func (c *Vibecheck) SetConfig(cfg FileConfig) error {
+	c.log.Debug("Updating vibecheck configuration")
+	c.fileConfig = cfg
+	return nil
 }
 
 // checkReinvites periodically checks for users to reinvite

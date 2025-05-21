@@ -11,11 +11,14 @@ import (
 	"slices"
 	"strings"
 
+	altsrc "github.com/urfave/cli-altsrc/v3"
+	yaml "github.com/urfave/cli-altsrc/v3/yaml"
 	"github.com/urfave/cli/v3"
 	"slackbot.arpa/bot/http"
 )
 
 func Flags() []cli.Flag {
+	var configFile string
 	return []cli.Flag{
 		&cli.StringFlag{
 			Name:    "log-level",
@@ -80,32 +83,46 @@ func Flags() []cli.Flag {
 			Value:   http.DefaultServerPort,
 			Sources: cli.EnvVars("SERVER_PORT"),
 		},
+		&cli.StringFlag{
+			Name:        "config-file",
+			Aliases:     []string{"config", "c"},
+			Usage:       "Path to yaml or json file of chat responses definition.",
+			Value:       "./config.yaml",
+			Sources:     cli.EnvVars("SLACK_CONFIG_FILE"),
+			Destination: &configFile,
+		},
 		&cli.StringSliceFlag{
-			Name:    "slack-preferred-users",
-			Usage:   "Preference toward users.",
-			Sources: cli.EnvVars("SLACK_PREFERRED_USERS"),
+			Name:  "slack-preferred-users",
+			Usage: "Preference toward users.",
+			Sources: cli.NewValueSourceChain(
+				cli.EnvVar("SLACK_PREFERRED_USERS"),
+				yaml.YAML("preferred_users", altsrc.NewStringPtrSourcer(&configFile)),
+			),
 		},
 		&cli.StringSliceFlag{
-			Name:    "slack-preferred-channels",
-			Usage:   "Channels to automatically join.",
-			Sources: cli.EnvVars("SLACK_PREFERRED_CHANNELS"),
+			Name:  "slack-preferred-channels",
+			Usage: "Channels to automatically join.",
+			Sources: cli.NewValueSourceChain(
+				cli.EnvVar("SLACK_PREFERRED_CHANNELS"),
+				yaml.YAML("preferred_channels", altsrc.NewStringPtrSourcer(&configFile)),
+			),
 		},
 		&cli.StringFlag{
-			Name:    "slack-obituary-notify-channel",
-			Usage:   "Channel name to notify when a user is deleted from the Slack organization.",
-			Sources: cli.EnvVars("SLACK_OBITUARY_NOTIFY_CHANNEL"),
+			Name:  "slack-obituary-notify-channel",
+			Usage: "Channel name to notify when a user is deleted from the Slack organization.",
+			Sources: cli.NewValueSourceChain(
+				cli.EnvVar("SLACK_OBITUARY_NOTIFY_CHANNEL"),
+				yaml.YAML("obituary.notify_channel", altsrc.NewStringPtrSourcer(&configFile)),
+			),
 		},
 		&cli.StringFlag{
-			Name:    "slack-events-path",
-			Usage:   "HTTP path for the Slack Events API endpoint.",
-			Value:   "/api/slack/events",
-			Sources: cli.EnvVars("SLACK_EVENTS_PATH"),
-		},
-		&cli.StringFlag{
-			Name:    "slack-responses-file",
-			Usage:   "Path to yaml or json file of responses definition. See default file or chat package for response definition.",
-			Value:   "./responses.yaml",
-			Sources: cli.EnvVars("SLACK_RESPONSES_FILE"),
+			Name:  "slack-events-path",
+			Usage: "HTTP path for the Slack Events API endpoint.",
+			Value: "/api/slack/events",
+			Sources: cli.NewValueSourceChain(
+				cli.EnvVar("SLACK_EVENTS_PATH"),
+				yaml.YAML("slack_events_path", altsrc.NewStringPtrSourcer(&configFile)),
+			),
 		},
 	}
 }

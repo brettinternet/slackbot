@@ -2,18 +2,12 @@ package chat
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"math/rand"
-	"os"
-	"path"
 	"regexp"
 	"strings"
 	"sync/atomic"
 	"time"
 
-	"github.com/fsnotify/fsnotify"
-	"github.com/goccy/go-yaml"
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 	"go.uber.org/zap"
@@ -23,34 +17,39 @@ const eventChannelSize = 100
 
 // Response defines a pattern to match and the corresponding response
 type Response struct {
-	Pattern        string   `json:"pattern"` // Can be a plain text or a regular expression
-	Message        string   `json:"message"` // The message to respond with
-	Messages       string   `json:"messages"`
-	RandomMessages []string `json:"randomMessages"` // Random messages to respond with
-	Reactions      []string `json:"reactions"`      // Reactions to add to the message
-	IsRegexp       bool     `json:"isRegexp"`       // Whether the pattern is a regular expression
+	Pattern        string   `json:"pattern" yaml:"pattern"`                 // Can be a plain text or a regular expression
+	Message        string   `json:"message" yaml:"message"`                 // response
+	Messages       string   `json:"messages" yaml:"messages"`               // Deprecated, use Message
+	RandomMessages []string `json:"random_messages" yaml:"random_messages"` // Random messages to respond with
+	Reactions      []string `json:"reactions" yaml:"reactions"`             // Reactions to add to the message
+	IsRegexp       bool     `json:"is_regexp" yaml:"is_regexp"`             // Whether the pattern is a regular expression
+}
+
+// FileConfig represents the structure of the chat section in the config file
+type FileConfig struct {
+	Responses []Response `json:"responses" yaml:"responses"`
 }
 
 // Config defines the configuration for the Chat feature
 type Config struct {
-	ResponsesFile  string
-	UseRegexp      bool
 	PreferredUsers []string
+}
+
+// ChatConfig contains configuration specific to the chat module
+type ChatConfig struct {
+	Responses []Response
 }
 
 // Chat handles responding to messages based on configured patterns
 type Chat struct {
-	log           *zap.Logger
-	config        Config
-	slack         *slack.Client
-	regexps       map[string]*regexp.Regexp
-	stopCh        chan struct{}
-	eventsCh      chan slackevents.EventsAPIEvent
-	isConnected   atomic.Bool
-	responses     []Response
-	watcher       *fsnotify.Watcher
-	lastModTime   time.Time
-	pollingTicker *time.Ticker
+	log         *zap.Logger
+	config      Config
+	slack       *slack.Client
+	regexps     map[string]*regexp.Regexp
+	stopCh      chan struct{}
+	eventsCh    chan slackevents.EventsAPIEvent
+	isConnected atomic.Bool
+	fileConfig  FileConfig
 }
 
 func NewChat(log *zap.Logger, config Config, client *slack.Client) *Chat {
@@ -71,50 +70,13 @@ func (c *Chat) ProcessorType() string {
 
 // Start initializes the Chat feature with a Slack slack
 func (c *Chat) Start(ctx context.Context) error {
-	if c.config.ResponsesFile == "" {
-		return fmt.Errorf("responses file not specified")
-	}
-
-	// Initialize file watcher
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		return fmt.Errorf("create file watcher: %w", err)
-	}
-	c.watcher = watcher
-
-	// Get initial file stats and load responses
-	fileInfo, err := os.Stat(c.config.ResponsesFile)
-	if err != nil {
-		return fmt.Errorf("stat responses file: %w", err)
-	}
-	c.lastModTime = fileInfo.ModTime()
-
-	if err := c.readResponses(); err != nil {
-		return fmt.Errorf("read responses file: %w", err)
-	}
-
-	// Add file to watch
-	if err := watcher.Add(c.config.ResponsesFile); err != nil {
-		c.log.Warn("Could not watch responses file, falling back to polling only",
-			zap.String("file", c.config.ResponsesFile),
-			zap.Error(err),
-		)
-	}
-
-	// Create polling ticker (check every 30 seconds)
-	c.pollingTicker = time.NewTicker(30 * time.Second)
-
 	c.isConnected.Store(true)
 
 	// Start listening for events in a goroutine
 	go c.handleEvents(ctx)
 
-	// Start watching for file changes
-	go c.watchResponsesFile(ctx)
-
 	c.log.Debug("Chat feature started successfully.",
-		zap.Int("responses", len(c.responses)),
-		zap.String("responses_file", c.config.ResponsesFile),
+		zap.Int("responses", len(c.fileConfig.Responses)),
 	)
 	return nil
 }
@@ -127,14 +89,6 @@ func (c *Chat) Stop(ctx context.Context) error {
 
 	close(c.stopCh)
 	c.isConnected.Store(false)
-
-	// Stop the polling ticker if it exists
-	if c.pollingTicker != nil {
-		c.pollingTicker.Stop()
-	}
-
-	// The watcher is closed in the watchResponsesFile goroutine
-	// when it exits after receiving the stop signal
 
 	return nil
 }
@@ -195,7 +149,7 @@ func (c *Chat) handleMessageEvent(ctx context.Context, ev *slackevents.MessageEv
 	)
 
 	var messageReplied bool
-	for _, resp := range c.responses {
+	for _, resp := range c.fileConfig.Responses {
 		var isMatch bool
 		if resp.IsRegexp {
 			re, exists := c.regexps[resp.Pattern]
@@ -275,45 +229,15 @@ func (c *Chat) handleMessageEvent(ctx context.Context, ev *slackevents.MessageEv
 	)
 }
 
-// AddResponse adds a new response pattern dynamically
-func (c *Chat) AddResponse(pattern string, message string, isRegexp bool) error {
-	if isRegexp {
-		re, err := regexp.Compile("(?i)" + pattern)
-		if err != nil {
-			return fmt.Errorf("invalid regular expression pattern: %w", err)
-		}
-		c.regexps[pattern] = re
-	}
+// SetConfig updates the chat configuration with values from the centralized config
+func (c *Chat) SetConfig(cfg FileConfig) error {
+	c.log.Info("Updating chat configuration",
+		zap.Int("responses", len(cfg.Responses)))
 
-	c.responses = append(c.responses, Response{
-		Pattern:  pattern,
-		Message:  message,
-		IsRegexp: isRegexp,
-	})
+	c.fileConfig = cfg
 
-	return nil
-}
-
-// AddResponse adds a new response pattern dynamically
-func (c *Chat) readResponses() error {
-	var responses []Response
-	ext := path.Ext(c.config.ResponsesFile)
-	switch ext {
-	case ".json":
-		if err := parseJSONFile(c.config.ResponsesFile, &responses); err != nil {
-			return fmt.Errorf("parse responses file: %w", err)
-		}
-	case ".yaml", ".yml":
-		if err := parseYAMLFile(c.config.ResponsesFile, &responses); err != nil {
-			return fmt.Errorf("parse responses file: %w", err)
-		}
-	default:
-		return fmt.Errorf("unsupported responses file format: %s", ext)
-	}
-	c.responses = responses
-
-	// Compile regular expressions for faster matching
-	for _, resp := range c.responses {
+	c.regexps = make(map[string]*regexp.Regexp)
+	for _, resp := range c.fileConfig.Responses {
 		if resp.IsRegexp {
 			re, err := regexp.Compile("(?i)" + resp.Pattern)
 			if err != nil {
@@ -327,93 +251,6 @@ func (c *Chat) readResponses() error {
 		}
 	}
 
-	return nil
-}
-
-// watchResponsesFile monitors the responses file for changes
-func (c *Chat) watchResponsesFile(ctx context.Context) {
-	defer c.watcher.Close()
-
-	for {
-		select {
-		case <-c.stopCh:
-			return
-		case <-ctx.Done():
-			return
-		case <-c.pollingTicker.C:
-			// Regular polling fallback for Docker/Alpine environments
-			c.checkFileModification()
-		case event, ok := <-c.watcher.Events:
-			if !ok {
-				return
-			}
-
-			// Check if this is a write or create event
-			if event.Op&(fsnotify.Write|fsnotify.Create) != 0 {
-				c.checkFileModification()
-			}
-		case err, ok := <-c.watcher.Errors:
-			if !ok {
-				return
-			}
-			c.log.Error("File watcher error", zap.Error(err))
-		}
-	}
-}
-
-// checkFileModification checks if the file has been modified and reloads if needed
-func (c *Chat) checkFileModification() {
-	// Get file info to check modification time
-	fileInfo, err := os.Stat(c.config.ResponsesFile)
-	if err != nil {
-		c.log.Error("Failed to stat responses file",
-			zap.String("file", c.config.ResponsesFile),
-			zap.Error(err),
-		)
-		return
-	}
-
-	// Only reload if the file was actually modified
-	if fileInfo.ModTime().After(c.lastModTime) {
-		c.lastModTime = fileInfo.ModTime()
-		c.log.Info("Responses file changed, reloading",
-			zap.String("file", c.config.ResponsesFile),
-		)
-
-		if err := c.readResponses(); err != nil {
-			c.log.Error("Failed to reload responses file",
-				zap.String("file", c.config.ResponsesFile),
-				zap.Error(err),
-			)
-		} else {
-			c.log.Info("Successfully reloaded responses",
-				zap.String("file", c.config.ResponsesFile),
-				zap.Int("count", len(c.responses)),
-			)
-		}
-	}
-}
-
-func parseJSONFile(filePath string, v any) error {
-	content, err := os.ReadFile(filePath)
-	if err != nil {
-		return fmt.Errorf("read responses file: %w", err)
-	}
-	if err := json.Unmarshal(content, v); err != nil {
-		return fmt.Errorf("unmarshal responses: %w", err)
-	}
-	return nil
-}
-
-func parseYAMLFile(filePath string, v any) error {
-	content, err := os.ReadFile(filePath)
-	if err != nil {
-		return fmt.Errorf("open file: %w", err)
-	}
-
-	if err := yaml.Unmarshal(content, v); err != nil {
-		return fmt.Errorf("unmarshal yaml: %w", err)
-	}
 	return nil
 }
 
