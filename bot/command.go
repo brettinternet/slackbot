@@ -35,10 +35,6 @@ func newDeleteMessagesFromChannelCommand(s *Bot) *cli.Command {
 }
 
 func deleteMessagesFromChannel(ctx context.Context, cmd *cli.Command, s *Bot) error {
-	if err := s.Run(ctx, false); err != nil {
-		return fmt.Errorf("run bot: %w", err)
-	}
-
 	f := newDeleteMessagesFromChannelCommandFlags(cmd)
 	if f.Channel == "" {
 		return fmt.Errorf("channel ID is required")

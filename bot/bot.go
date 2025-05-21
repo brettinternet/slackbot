@@ -49,7 +49,7 @@ func (s *Bot) Setup(ctx context.Context, cmd *cli.Command) (context.Context, err
 		JSONConsole:  isProd,
 	})
 	if err != nil {
-		return ctx, err
+		return ctx, fmt.Errorf("logger setup: %w", err)
 	}
 
 	s.log = s.logger.Get()
@@ -57,61 +57,56 @@ func (s *Bot) Setup(ctx context.Context, cmd *cli.Command) (context.Context, err
 
 	if s.config.Features != nil {
 		s.log.Debug("Running bot with features.", zap.Any("features", s.config.Features))
+	} else {
+		s.log.Warn("No features enabled.")
 	}
 
-	if config.HasFeature(s.config.Features, config.FeatureServer) {
-		s.httpServer = http.NewServer(s.log, s.config.Server, s.slack)
+	if err := s.slack.Setup(ctx); err != nil {
+		return ctx, fmt.Errorf("start slack: %w", err)
 	}
 
 	if config.HasFeature(s.config.Features, config.FeatureObituary) {
-		s.obituary = obituary.NewObituary(s.log, s.config.Obituary)
+		s.obituary = obituary.NewObituary(s.log, s.config.Obituary, s.slack.Client())
 	}
 
 	if config.HasFeature(s.config.Features, config.FeatureChat) {
-		s.chat = chat.NewChat(s.log, s.config.Chat)
+		s.chat = chat.NewChat(s.log, s.config.Chat, s.slack.Client())
 	}
 
 	if config.HasFeature(s.config.Features, config.FeatureVibecheck) {
-		s.vibecheck = vibecheck.NewVibecheck(s.log)
+		s.vibecheck = vibecheck.NewVibecheck(s.log, s.config.Vibecheck, s.slack.Client())
 	}
 
+	s.httpServer = http.NewServer(s.log, s.config.Server, s.slack)
 	return ctx, nil
 }
 
-func (s *Bot) Run(runCtx context.Context, serve bool) error {
+func (s *Bot) Run(runCtx context.Context) error {
 	if err := s.slack.Start(runCtx); err != nil {
 		return fmt.Errorf("start slack: %w", err)
 	}
 
-	slackClient := s.slack.Client()
-	if slackClient == nil {
-		return errors.New("slack client is unavailable")
-	}
-
 	if s.chat != nil && s.httpServer != nil {
 		s.httpServer.RegisterEventProcessor(s.chat)
-		if err := s.chat.Start(runCtx, slackClient); err != nil {
+		if err := s.chat.Start(runCtx); err != nil {
 			return fmt.Errorf("start chat: %w", err)
 		}
 	}
 
 	if s.vibecheck != nil && s.httpServer != nil {
 		s.httpServer.RegisterEventProcessor(s.vibecheck)
-		if err := s.vibecheck.Start(runCtx, slackClient); err != nil {
+		if err := s.vibecheck.Start(runCtx); err != nil {
 			return fmt.Errorf("start vibecheck: %w", err)
 		}
 	}
 
 	if s.obituary != nil {
-		if err := s.obituary.Start(runCtx, slackClient); err != nil {
+		if err := s.obituary.Start(runCtx); err != nil {
 			return fmt.Errorf("start obituary: %w", err)
 		}
 	}
 
-	if serve && s.httpServer != nil {
-		return s.httpServer.Run(runCtx)
-	}
-	return nil
+	return s.httpServer.Run(runCtx)
 }
 
 func (s *Bot) BeginShutdown(ctx context.Context) error {

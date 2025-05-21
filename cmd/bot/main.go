@@ -53,7 +53,7 @@ func run(rootCtx context.Context, args []string) error {
 	runCtx, runCancel := context.WithCancel(context.Background())
 	svcErr := make(chan error, 1)
 	go func() {
-		err := b.Run(runCtx, true)
+		err := b.Run(runCtx)
 		svcErr <- err
 	}()
 

@@ -29,7 +29,7 @@ func NewSlack(log *zap.Logger, config Config) *Slack {
 	}
 }
 
-func (s *Slack) Start(ctx context.Context) error {
+func (s *Slack) Setup(ctx context.Context) error {
 	if s.config.Token == "" {
 		return fmt.Errorf("no Slack authentication credentials provided")
 	}
@@ -44,6 +44,10 @@ func (s *Slack) Start(ctx context.Context) error {
 		return fmt.Errorf("authenticate with Slack: %w", err)
 	}
 
+	return nil
+}
+
+func (s *Slack) Start(ctx context.Context) error {
 	if err := s.client.SetUserPresenceContext(ctx, "auto"); err != nil {
 		return fmt.Errorf("user presence auto: %w", err)
 	}

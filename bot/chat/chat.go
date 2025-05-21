@@ -32,7 +32,7 @@ type Config struct {
 type Chat struct {
 	log         *zap.Logger
 	config      Config
-	client      *slack.Client
+	slack       *slack.Client
 	regexps     map[string]*regexp.Regexp
 	stopCh      chan struct{}
 	eventsCh    chan slackevents.EventsAPIEvent
@@ -44,13 +44,14 @@ func (c *Chat) ProcessorType() string {
 	return "chat"
 }
 
-func NewChat(log *zap.Logger, config Config) *Chat {
+func NewChat(log *zap.Logger, config Config, client *slack.Client) *Chat {
 	c := &Chat{
 		log:      log,
 		config:   config,
 		regexps:  make(map[string]*regexp.Regexp),
 		stopCh:   make(chan struct{}),
 		eventsCh: make(chan slackevents.EventsAPIEvent, eventChannelSize),
+		slack:    client,
 	}
 
 	// Compile regular expressions for faster matching
@@ -71,13 +72,8 @@ func NewChat(log *zap.Logger, config Config) *Chat {
 	return c
 }
 
-// Start initializes the Chat feature with a Slack client
-func (c *Chat) Start(ctx context.Context, client *slack.Client) error {
-	if client == nil {
-		return fmt.Errorf("slack client is not initialized")
-	}
-
-	c.client = client
+// Start initializes the Chat feature with a Slack slack
+func (c *Chat) Start(ctx context.Context) error {
 	c.isConnected.Store(true)
 
 	// Start listening for events in a goroutine
@@ -173,7 +169,7 @@ func (c *Chat) handleMessageEvent(ev *slackevents.MessageEvent) {
 				zap.String("channel", ev.Channel),
 			)
 
-			_, _, err := c.client.PostMessage(
+			_, _, err := c.slack.PostMessage(
 				ev.Channel,
 				slack.MsgOptionText(resp.Message, false),
 				slack.MsgOptionAsUser(true),

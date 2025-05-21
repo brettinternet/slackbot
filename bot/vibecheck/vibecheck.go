@@ -2,7 +2,6 @@ package vibecheck
 
 import (
 	"context"
-	"fmt"
 	"regexp"
 	"slices"
 	"strings"
@@ -26,18 +25,19 @@ type Config struct {
 type Vibecheck struct {
 	log         *zap.Logger
 	config      Config
-	client      *slack.Client
+	slack       *slack.Client
 	isConnected atomic.Bool
 	stopCh      chan struct{}
 	eventsCh    chan slackevents.EventsAPIEvent
 }
 
-func NewVibecheck(log *zap.Logger, config Config) *Vibecheck {
+func NewVibecheck(log *zap.Logger, config Config, client *slack.Client) *Vibecheck {
 	return &Vibecheck{
 		log:      log,
 		config:   config,
 		stopCh:   make(chan struct{}),
 		eventsCh: make(chan slackevents.EventsAPIEvent, eventChannelSize),
+		slack:    client,
 	}
 }
 
@@ -47,12 +47,7 @@ func (c *Vibecheck) ProcessorType() string {
 }
 
 // Start initializes the Vibecheck feature with a Slack client
-func (c *Vibecheck) Start(ctx context.Context, client *slack.Client) error {
-	if client == nil {
-		return fmt.Errorf("slack client is not initialized")
-	}
-
-	c.client = client
+func (c *Vibecheck) Start(ctx context.Context) error {
 	c.isConnected.Store(true)
 
 	// Start listening for events in a goroutine
@@ -139,7 +134,7 @@ func (c *Vibecheck) handleMessageEvent(ctx context.Context, ev *slackevents.Mess
 
 		passed := randomBool(weight)
 		response := randomResponse(passed)
-		_, _, err := c.client.PostMessageContext(
+		_, _, err := c.slack.PostMessageContext(
 			ctx,
 			ev.Channel,
 			slack.MsgOptionText(response, false),
@@ -154,7 +149,7 @@ func (c *Vibecheck) handleMessageEvent(ctx context.Context, ev *slackevents.Mess
 
 		if !passed && !slices.Contains(c.config.PreferredUsers, ev.User) {
 			time.AfterFunc(5*time.Second, func() {
-				if err := c.client.KickUserFromConversationContext(ctx, ev.Channel, ev.User); err != nil {
+				if err := c.slack.KickUserFromConversationContext(ctx, ev.Channel, ev.User); err != nil {
 					c.log.Error("Failed to kick user from channel",
 						zap.String("channel", ev.Channel),
 						zap.String("user", ev.User),
