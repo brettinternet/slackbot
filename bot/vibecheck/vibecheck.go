@@ -134,8 +134,21 @@ func (c *Vibecheck) handleMessageEvent(ctx context.Context, ev *slackevents.Mess
 		}
 
 		passed := randomBool(weight)
+		reaction := "vibecheck"
+		if passed {
+			reaction = "ok"
+		}
+		err := c.slack.AddReactionContext(ctx, reaction, slack.NewRefToMessage(ev.Channel, ev.TimeStamp))
+		if err != nil {
+			c.log.Error("Failed to add reaction",
+				zap.String("channel", ev.Channel),
+				zap.String("user", ev.User),
+				zap.Error(err),
+			)
+		}
+
 		response := randomResponse(passed)
-		_, _, err := c.slack.PostMessageContext(
+		_, _, err = c.slack.PostMessageContext(
 			ctx,
 			ev.Channel,
 			slack.MsgOptionText(response, false),

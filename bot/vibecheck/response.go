@@ -31,10 +31,10 @@ var goodText = []string{
 	"V I B E C H E C K - P A S S E D",
 	"V I B E C H E C K - P A S S E D",
 	"V I B E C H E C K - P A S S E D",
+	"V I B E C H E C K - P A S S E D",
+	"V I B E C H E C K - F L A W L E S S",
 	"V I B E C H E C K - P A S S",
-	"V I B E C H E C K - P A S S E D :ok:",
-	"V I B E C H E C K - P A S S :ok: :ok:",
-	"V I B E C H E C K - P A S S :ok: :ok: :ok:",
+	"V I B E - I S - G O O D",
 	"L G T M",
 	":ok:V:ok:I:ok:B:ok:E:ok:",
 	"vibes are :ok:",
@@ -68,16 +68,16 @@ func badResponse() string {
 }
 
 func randomString(values []string) string {
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-	return values[r.Intn(len(values))]
+	rand.New(rand.NewSource(time.Now().UnixNano()))
+	return values[rand.Intn(len(values))]
 }
 
 func randomBool(weight float64) bool {
 	if weight < 0.0 || weight > 1.0 {
 		weight = 0.8
 	}
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-	return r.Float64() < weight
+	rand.New(rand.NewSource(time.Now().UnixNano()))
+	return rand.Float64() < weight
 }
 
 func randomResponse(passed bool) string {
