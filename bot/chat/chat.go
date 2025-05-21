@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"os"
 	"path"
 	"regexp"
@@ -22,10 +23,12 @@ const eventChannelSize = 100
 
 // Response defines a pattern to match and the corresponding response
 type Response struct {
-	Pattern   string   `json:"pattern"`   // Can be a plain text or a regular expression
-	Message   string   `json:"message"`   // The message to respond with
-	Reactions []string `json:"reactions"` // Reactions to add to the message
-	IsRegexp  bool     `json:"isRegexp"`  // Whether the pattern is a regular expression
+	Pattern        string   `json:"pattern"` // Can be a plain text or a regular expression
+	Message        string   `json:"message"` // The message to respond with
+	Messages       string   `json:"messages"`
+	RandomMessages []string `json:"randomMessages"` // Random messages to respond with
+	Reactions      []string `json:"reactions"`      // Reactions to add to the message
+	IsRegexp       bool     `json:"isRegexp"`       // Whether the pattern is a regular expression
 }
 
 // Config defines the configuration for the Chat feature
@@ -240,17 +243,26 @@ func (c *Chat) handleMessageEvent(ctx context.Context, ev *slackevents.MessageEv
 			// Check if the message is already replied to, so we can still add all reactions from responses
 			if !messageReplied && resp.Message != "" {
 				messageReplied = true
-				_, _, err := c.slack.PostMessageContext(
-					ctx,
-					ev.Channel,
-					slack.MsgOptionText(resp.Message, false),
-					slack.MsgOptionAsUser(true),
-				)
-				if err != nil {
-					c.log.Error("Failed to post response",
-						zap.String("channel", ev.Channel),
-						zap.Error(err),
+				messages := append([]string{resp.Message}, resp.RandomMessages...)
+				if len(resp.RandomMessages) > 0 {
+					messages = append([]string{randomString(resp.RandomMessages)}, messages...)
+				}
+				for _, msg := range messages {
+					if msg == "" {
+						continue
+					}
+					_, _, err := c.slack.PostMessageContext(
+						ctx,
+						ev.Channel,
+						slack.MsgOptionText(msg, false),
+						slack.MsgOptionAsUser(true),
 					)
+					if err != nil {
+						c.log.Error("Failed to post response",
+							zap.String("channel", ev.Channel),
+							zap.Error(err),
+						)
+					}
 				}
 			}
 		}
@@ -403,4 +415,9 @@ func parseYAMLFile(filePath string, v any) error {
 		return fmt.Errorf("unmarshal yaml: %w", err)
 	}
 	return nil
+}
+
+func randomString(values []string) string {
+	rand.New(rand.NewSource(time.Now().UnixNano()))
+	return values[rand.Intn(len(values))]
 }
