@@ -248,6 +248,10 @@ func (o *Obituary) checkForDeletedUsers(ctx context.Context) error {
 		o.log.Debug("No changes in user list, skipping save to disk.")
 	}
 
+	if err := o.saveUsersToDisk(); err != nil {
+		return fmt.Errorf("save users to disk: %w", err)
+	}
+
 	return nil
 }
 
