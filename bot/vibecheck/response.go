@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// TODO: move to configuration file
+
 var goodEmojis = []string{
 	":letsgo:",
 	":ok:",
@@ -21,7 +23,9 @@ var badEmojis = []string{
 	":diesofcringe:",
 	":no_entry:",
 	":alert:",
-	":sad:",
+	":sadcat:",
+	":sadcowboy:",
+	":pensive-cowboy-bread:",
 	":cry:",
 	":sadge:",
 	":vibecheck:",

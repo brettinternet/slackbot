@@ -32,6 +32,7 @@ type Vibecheck struct {
 	eventsCh    chan slackevents.EventsAPIEvent
 	kickedUsers *kickedUsersManager
 	ticker      *time.Ticker
+	dedupe      *messageDeduplicator
 }
 
 func NewVibecheck(log *zap.Logger, config Config, client *slack.Client) *Vibecheck {
@@ -42,7 +43,8 @@ func NewVibecheck(log *zap.Logger, config Config, client *slack.Client) *Vibeche
 		eventsCh:    make(chan slackevents.EventsAPIEvent, eventChannelSize),
 		slack:       client,
 		kickedUsers: newKickedUsersManager(log, config.DataDir),
-		ticker:      time.NewTicker(10 * time.Second), // Check more frequently during debugging
+		ticker:      time.NewTicker(10 * time.Second),         // Check more frequently during debugging
+		dedupe:      newMessageDeduplicator(30 * time.Second), // Remember messages for 30 seconds
 	}
 }
 
@@ -131,6 +133,16 @@ func (c *Vibecheck) handleMessageEvent(ctx context.Context, ev *slackevents.Mess
 		zap.String("text", message),
 		zap.String("type", c.ProcessorType()),
 	)
+
+	// Check if this is a duplicate message we've already processed
+	if c.dedupe.IsDupe(ev.User, ev.Channel, ev.TimeStamp) {
+		c.log.Debug("Skipping duplicate message",
+			zap.String("user", ev.User),
+			zap.String("channel", ev.Channel),
+			zap.String("timestamp", ev.TimeStamp),
+		)
+		return
+	}
 
 	if pattern.MatchString(message) {
 		c.log.Info("Message matched vibecheck pattern.",
