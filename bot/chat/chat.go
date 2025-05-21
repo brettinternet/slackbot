@@ -191,6 +191,7 @@ func (c *Chat) handleMessageEvent(ctx context.Context, ev *slackevents.MessageEv
 		zap.String("type", c.ProcessorType()),
 	)
 
+	var messageReplied bool
 	for _, resp := range c.responses {
 		var isMatch bool
 		if resp.IsRegexp {
@@ -236,7 +237,9 @@ func (c *Chat) handleMessageEvent(ctx context.Context, ev *slackevents.MessageEv
 				}
 			}
 
-			if resp.Message != "" {
+			// Check if the message is already replied to, so we can still add all reactions from responses
+			if !messageReplied && resp.Message != "" {
+				messageReplied = true
 				_, _, err := c.slack.PostMessageContext(
 					ctx,
 					ev.Channel,
@@ -250,9 +253,6 @@ func (c *Chat) handleMessageEvent(ctx context.Context, ev *slackevents.MessageEv
 					)
 				}
 			}
-
-			// Stop after the first match
-			return
 		}
 	}
 
