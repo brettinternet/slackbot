@@ -16,10 +16,10 @@ const eventChannelSize = 100
 
 // Response defines a pattern to match and the corresponding response
 type Response struct {
-	Pattern   string   // Can be a plain text or a regular expression
-	Message   string   // The message to respond with
-	Reactions []string // Reactions to add to the message
-	IsRegexp  bool     // Whether the pattern is a regular expression
+	Pattern   string   `json:"pattern"`   // Can be a plain text or a regular expression
+	Message   string   `json:"message"`   // The message to respond with
+	Reactions []string `json:"reactions"` // Reactions to add to the message
+	IsRegexp  bool     `json:"isRegexp"`  // Whether the pattern is a regular expression
 }
 
 // Config defines the configuration for the Chat feature
@@ -148,7 +148,6 @@ func (c *Chat) handleMessageEvent(ctx context.Context, ev *slackevents.MessageEv
 		zap.String("channel", ev.Channel),
 		zap.String("text", message),
 		zap.String("type", c.ProcessorType()),
-		zap.Any("responses", c.config.Responses),
 	)
 
 	for _, resp := range c.config.Responses {

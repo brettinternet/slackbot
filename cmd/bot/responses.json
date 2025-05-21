@@ -1,12 +1,12 @@
 [
   {
-    "Pattern": "hello",
-    "Message": "Hello there! How can I help you today?",
-    "IsRegexp": false
+    "pattern": "hello",
+    "message": "Hello there! How can I help you today?",
+    "isRegexp": false
   },
   {
-    "Pattern": "thanks|thank you",
-    "Message": "You're welcome!",
-    "IsRegexp": true
+    "pattern": "thanks|thank you",
+    "message": "You're welcome!",
+    "isRegexp": true
   }
 ]

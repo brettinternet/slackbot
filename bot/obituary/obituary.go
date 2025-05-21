@@ -270,18 +270,22 @@ func (o *Obituary) notifyUserDeleted(ctx context.Context, user *slack.User) {
 			URL:  profileLink,
 		},
 	}
-	if user.Profile.RealName != "" {
+	if user.Profile.RealName != "" && !user.IsBot {
 		actions = append(actions, slack.AttachmentAction{
 			Type: "button",
 			Text: "View LinkedIn",
 			URL:  linkedinURL(user.Profile.RealName),
 		})
 	}
+	userTitle := "User"
+	if user.IsBot {
+		userTitle = "Bot"
+	}
 	attachment := slack.Attachment{
 		Color:      "#FF5733", // Red-orange color
-		Title:      ":rip: User Deleted",
+		Title:      fmt.Sprintf(":rip: %s Deleted", userTitle),
 		Text:       message,
-		Footer:     fmt.Sprintf("User ID: %s; Monitoring %d remaining users", user.ID, len(o.knownUsers)),
+		Footer:     fmt.Sprintf("%s ID: %s; Monitoring %d remaining users", userTitle, user.ID, len(o.knownUsers)),
 		FooterIcon: "https://platform.slack-edge.com/img/default_application_icon.png",
 		Ts:         json.Number(fmt.Sprintf("%d", time.Now().Unix())),
 		Actions:    actions,
