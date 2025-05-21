@@ -88,7 +88,7 @@ func Flags() []cli.Flag {
 			Aliases:     []string{"config", "c"},
 			Usage:       "Path to yaml or json file of chat responses definition.",
 			Value:       "./config.yaml",
-			Sources:     cli.EnvVars("SLACK_CONFIG_FILE"),
+			Sources:     cli.EnvVars("CONFIG_FILE"),
 			Destination: &configFile,
 		},
 		&cli.StringSliceFlag{
