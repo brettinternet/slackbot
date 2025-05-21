@@ -147,7 +147,7 @@ func (c *Vibecheck) handleMessageEvent(ctx context.Context, ev *slackevents.Mess
 			)
 		}
 
-		if !passed && !slices.Contains(c.config.PreferredUsers, ev.User) {
+		if !passed && !slices.Contains(c.config.PreferredUsers, ev.User) && !slices.Contains(c.config.PreferredUsers, ev.Username) {
 			time.AfterFunc(5*time.Second, func() {
 				if err := c.slack.KickUserFromConversationContext(ctx, ev.Channel, ev.User); err != nil {
 					c.log.Error("Failed to kick user from channel",

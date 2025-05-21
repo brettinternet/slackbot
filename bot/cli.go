@@ -63,5 +63,6 @@ func NewCommandRoot(s *Bot) (*bool, *cli.Command) {
 func Commands(s *Bot) []*cli.Command {
 	return []*cli.Command{
 		newDeleteMessagesFromChannelCommand(s),
+		newInviteToChannelCommand(s),
 	}
 }

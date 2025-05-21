@@ -270,11 +270,11 @@ func (o *Obituary) notifyUserDeleted(ctx context.Context, user *slack.User) {
 			URL:  profileLink,
 		},
 	}
-	if user.RealName != "" {
+	if user.Profile.RealName != "" {
 		actions = append(actions, slack.AttachmentAction{
 			Type: "button",
 			Text: "View LinkedIn",
-			URL:  linkedinURL(user.RealName),
+			URL:  linkedinURL(user.Profile.RealName),
 		})
 	}
 	attachment := slack.Attachment{

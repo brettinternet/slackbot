@@ -9,12 +9,12 @@ import (
 	"go.uber.org/zap"
 )
 
-type DeleteMessagesFromChannelCommandFlags struct {
+type deleteMessagesFromChannelCommandFlags struct {
 	Channel string
 }
 
-func newDeleteMessagesFromChannelCommandFlags(cmd *cli.Command) *DeleteMessagesFromChannelCommandFlags {
-	return &DeleteMessagesFromChannelCommandFlags{
+func newDeleteMessagesFromChannelCommandFlags(cmd *cli.Command) *deleteMessagesFromChannelCommandFlags {
+	return &deleteMessagesFromChannelCommandFlags{
 		Channel: cmd.String("channel"),
 	}
 }
@@ -92,5 +92,69 @@ func deleteMessagesFromChannel(ctx context.Context, cmd *cli.Command, s *Bot) er
 	}
 
 	s.log.Info("Finished deleting bot messages", zap.Int("messagesDeleted", messagesDeleted))
+	return nil
+}
+
+type inviteToChannelCommandFlags struct {
+	Users    []string
+	Channels []string
+}
+
+func newInviteToChannelCommandFlags(cmd *cli.Command) *inviteToChannelCommandFlags {
+	return &inviteToChannelCommandFlags{
+		Users:    cmd.StringSlice("users"),
+		Channels: cmd.StringSlice("channels"),
+	}
+}
+
+func newInviteToChannelCommand(s *Bot) *cli.Command {
+	return &cli.Command{
+		Name:   "invite-channel",
+		Usage:  "Invite users to bot channels",
+		Action: cmdWithBot(inviteToChannel, s),
+		Flags: []cli.Flag{
+			&cli.StringSliceFlag{
+				Name:     "users",
+				Aliases:  []string{"u"},
+				Usage:    "User ID to invite.",
+				Required: true,
+			},
+			&cli.StringSliceFlag{
+				Name:     "channels",
+				Aliases:  []string{"c"},
+				Usage:    "Channel ID to invite to. The bot must be a member of the channel.",
+				Required: true,
+			},
+		},
+	}
+}
+
+func inviteToChannel(ctx context.Context, cmd *cli.Command, s *Bot) error {
+	f := newInviteToChannelCommandFlags(cmd)
+	if f.Channels == nil {
+		return fmt.Errorf("channel ID is required")
+	}
+	if f.Users == nil {
+		return fmt.Errorf("user ID is required")
+	}
+	s.log.Info("Inviting users to channels", zap.Strings("channels", f.Channels), zap.Strings("users", f.Users))
+
+	client := s.slack.Client()
+	if client == nil {
+		return fmt.Errorf("slack client is unavailable")
+	}
+
+	for _, channel := range f.Channels {
+		for _, user := range f.Users {
+			_, err := client.InviteUsersToConversationContext(ctx, channel, user)
+			if err != nil {
+				s.log.Error("Failed to invite user to channel", zap.String("channel", channel), zap.String("user", user), zap.Error(err))
+				continue
+			}
+			s.log.Debug("User invited to channel", zap.String("channel", channel), zap.String("user", user))
+		}
+	}
+
+	s.log.Info("Finished inviting users.", zap.Int("users", len(f.Users)), zap.Int("channels", len(f.Channels)))
 	return nil
 }
