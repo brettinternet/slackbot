@@ -37,16 +37,17 @@ type Config struct {
 
 // Chat handles responding to messages based on configured patterns
 type Chat struct {
-	log         *zap.Logger
-	config      Config
-	slack       *slack.Client
-	regexps     map[string]*regexp.Regexp
-	stopCh      chan struct{}
-	eventsCh    chan slackevents.EventsAPIEvent
-	isConnected atomic.Bool
-	responses   []Response
-	watcher     *fsnotify.Watcher
-	lastModTime time.Time
+	log           *zap.Logger
+	config        Config
+	slack         *slack.Client
+	regexps       map[string]*regexp.Regexp
+	stopCh        chan struct{}
+	eventsCh      chan slackevents.EventsAPIEvent
+	isConnected   atomic.Bool
+	responses     []Response
+	watcher       *fsnotify.Watcher
+	lastModTime   time.Time
+	pollingTicker *time.Ticker
 }
 
 func NewChat(log *zap.Logger, config Config, client *slack.Client) *Chat {
@@ -91,8 +92,14 @@ func (c *Chat) Start(ctx context.Context) error {
 
 	// Add file to watch
 	if err := watcher.Add(c.config.ResponsesFile); err != nil {
-		return fmt.Errorf("watch responses file: %w", err)
+		c.log.Warn("Could not watch responses file, falling back to polling only",
+			zap.String("file", c.config.ResponsesFile),
+			zap.Error(err),
+		)
 	}
+
+	// Create polling ticker (check every 30 seconds)
+	c.pollingTicker = time.NewTicker(30 * time.Second)
 
 	c.isConnected.Store(true)
 
@@ -117,6 +124,11 @@ func (c *Chat) Stop(ctx context.Context) error {
 
 	close(c.stopCh)
 	c.isConnected.Store(false)
+
+	// Stop the polling ticker if it exists
+	if c.pollingTicker != nil {
+		c.pollingTicker.Stop()
+	}
 
 	// The watcher is closed in the watchResponsesFile goroutine
 	// when it exits after receiving the stop signal
@@ -316,6 +328,9 @@ func (c *Chat) watchResponsesFile(ctx context.Context) {
 			return
 		case <-ctx.Done():
 			return
+		case <-c.pollingTicker.C:
+			// Regular polling fallback for Docker/Alpine environments
+			c.checkFileModification()
 		case event, ok := <-c.watcher.Events:
 			if !ok {
 				return
@@ -323,41 +338,46 @@ func (c *Chat) watchResponsesFile(ctx context.Context) {
 
 			// Check if this is a write or create event
 			if event.Op&(fsnotify.Write|fsnotify.Create) != 0 {
-				// Get file info to check modification time
-				fileInfo, err := os.Stat(c.config.ResponsesFile)
-				if err != nil {
-					c.log.Error("Failed to stat responses file",
-						zap.String("file", c.config.ResponsesFile),
-						zap.Error(err),
-					)
-					continue
-				}
-
-				// Only reload if the file was actually modified (avoids double-triggers)
-				if fileInfo.ModTime().After(c.lastModTime) {
-					c.lastModTime = fileInfo.ModTime()
-					c.log.Info("Responses file changed, reloading",
-						zap.String("file", c.config.ResponsesFile),
-					)
-
-					if err := c.readResponses(); err != nil {
-						c.log.Error("Failed to reload responses file",
-							zap.String("file", c.config.ResponsesFile),
-							zap.Error(err),
-						)
-					} else {
-						c.log.Info("Successfully reloaded responses",
-							zap.String("file", c.config.ResponsesFile),
-							zap.Int("count", len(c.responses)),
-						)
-					}
-				}
+				c.checkFileModification()
 			}
 		case err, ok := <-c.watcher.Errors:
 			if !ok {
 				return
 			}
 			c.log.Error("File watcher error", zap.Error(err))
+		}
+	}
+}
+
+// checkFileModification checks if the file has been modified and reloads if needed
+func (c *Chat) checkFileModification() {
+	// Get file info to check modification time
+	fileInfo, err := os.Stat(c.config.ResponsesFile)
+	if err != nil {
+		c.log.Error("Failed to stat responses file",
+			zap.String("file", c.config.ResponsesFile),
+			zap.Error(err),
+		)
+		return
+	}
+
+	// Only reload if the file was actually modified
+	if fileInfo.ModTime().After(c.lastModTime) {
+		c.lastModTime = fileInfo.ModTime()
+		c.log.Info("Responses file changed, reloading",
+			zap.String("file", c.config.ResponsesFile),
+		)
+
+		if err := c.readResponses(); err != nil {
+			c.log.Error("Failed to reload responses file",
+				zap.String("file", c.config.ResponsesFile),
+				zap.Error(err),
+			)
+		} else {
+			c.log.Info("Successfully reloaded responses",
+				zap.String("file", c.config.ResponsesFile),
+				zap.Int("count", len(c.responses)),
+			)
 		}
 	}
 }

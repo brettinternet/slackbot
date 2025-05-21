@@ -1,8 +1,9 @@
 ARG IMAGE_VERSION=1.24-alpine3.21
 FROM golang:${IMAGE_VERSION}
 
-
 WORKDIR /app
+
+RUN apk add --no-cache inotify-tools
 
 COPY go.mod go.sum ./
 
