@@ -6,8 +6,8 @@ on: # yamllint disable-line rule:truthy
     branches:
       - main
     paths:
-      - bot/*
-      - cmd/bot/*
+      - bot/**
+      - cmd/bot/**
       - .github/workflows/publish-bot.yaml
 
 env:
