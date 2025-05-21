@@ -43,7 +43,7 @@ func NewVibecheck(log *zap.Logger, config Config, client *slack.Client) *Vibeche
 
 // ProcessorType returns a description of the processor type
 func (c *Vibecheck) ProcessorType() string {
-	return "Vibecheck"
+	return "vibecheck"
 }
 
 // Start initializes the Vibecheck feature with a Slack client
@@ -120,6 +120,7 @@ func (c *Vibecheck) handleMessageEvent(ctx context.Context, ev *slackevents.Mess
 		zap.String("user", ev.User),
 		zap.String("channel", ev.Channel),
 		zap.String("text", message),
+		zap.String("type", c.ProcessorType()),
 	)
 
 	if pattern.MatchString(message) {

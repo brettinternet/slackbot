@@ -104,7 +104,7 @@ func Flags() []cli.Flag {
 		&cli.StringFlag{
 			Name:    "slack-responses-file",
 			Usage:   "Path to yaml or json file of responses definition. See default file or chat package for response definition.",
-			Value:   "./responses.json",
+			Value:   "./responses.yaml",
 			Sources: cli.EnvVars("SLACK_RESPONSES_FILE"),
 		},
 	}

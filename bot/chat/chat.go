@@ -39,11 +39,6 @@ type Chat struct {
 	isConnected atomic.Bool
 }
 
-// ProcessorType returns a description of the processor type
-func (c *Chat) ProcessorType() string {
-	return "chat"
-}
-
 func NewChat(log *zap.Logger, config Config, client *slack.Client) *Chat {
 	c := &Chat{
 		log:      log,
@@ -72,6 +67,11 @@ func NewChat(log *zap.Logger, config Config, client *slack.Client) *Chat {
 	return c
 }
 
+// ProcessorType returns a description of the processor type
+func (c *Chat) ProcessorType() string {
+	return "chat"
+}
+
 // Start initializes the Chat feature with a Slack slack
 func (c *Chat) Start(ctx context.Context) error {
 	c.isConnected.Store(true)
@@ -79,7 +79,7 @@ func (c *Chat) Start(ctx context.Context) error {
 	// Start listening for events in a goroutine
 	go c.handleEvents(ctx)
 
-	c.log.Debug("Chat feature started successfully.")
+	c.log.Debug("Chat feature started successfully.", zap.Int("responses", len(c.config.Responses)))
 	return nil
 }
 
@@ -146,6 +146,7 @@ func (c *Chat) handleMessageEvent(ev *slackevents.MessageEvent) {
 		zap.String("user", ev.User),
 		zap.String("channel", ev.Channel),
 		zap.String("text", message),
+		zap.String("type", c.ProcessorType()),
 	)
 
 	// Check if the message matches any of our configured responses

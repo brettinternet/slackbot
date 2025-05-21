@@ -29,6 +29,8 @@ var badEmojis = []string{
 
 var goodText = []string{
 	"V I B E C H E C K - P A S S E D",
+	"V I B E C H E C K - P A S S E D",
+	"V I B E C H E C K - P A S S E D",
 	"V I B E C H E C K - P A S S",
 	"V I B E C H E C K - P A S S E D :ok:",
 	"V I B E C H E C K - P A S S :ok: :ok:",
@@ -41,13 +43,16 @@ var goodText = []string{
 }
 
 var badText = []string{
+	"V I B E C H E C K - F A I L E D",
+	"V I B E C H E C K - F A I L E D",
+	"V I B E C H E C K - F A I L E D",
 	"BAD!",
 	"really really not great",
-	"V I B E C H E C K - F A I L E D",
 	"noooooooo",
 	"V I B E C H E C K - F A I L E D :no_entry:",
 	"nah, not the vibe",
 	"V I B E  T A R I F F  U N P A I D",
+	":middle_finger:",
 }
 
 func goodResponse() string {
