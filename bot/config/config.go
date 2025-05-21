@@ -1,15 +1,12 @@
 package config
 
 import (
-	"encoding/json"
-	"fmt"
 	"os"
 	"path"
 	"path/filepath"
 	"slices"
 	"strings"
 
-	"github.com/goccy/go-yaml"
 	"github.com/urfave/cli/v3"
 	"slackbot.arpa/bot/chat"
 	"slackbot.arpa/bot/http"
@@ -176,24 +173,6 @@ func newConfig(opts configOpts) (Config, error) {
 		}
 	}
 
-	var responses []chat.Response
-	if opts.SlackResponsesFile != "" {
-		ext := path.Ext(opts.SlackResponsesFile)
-		switch ext {
-		case ".json":
-			if err := parseJSONFile(opts.SlackResponsesFile, &responses); err != nil {
-				return Config{}, fmt.Errorf("parse responses file: %w", err)
-			}
-		case ".yaml", ".yml":
-			if err := parseYAMLFile(opts.SlackResponsesFile, &responses); err != nil {
-				return Config{}, fmt.Errorf("parse responses file: %w", err)
-			}
-		default:
-			return Config{}, fmt.Errorf("unsupported responses file format: %s", ext)
-		}
-
-	}
-
 	return Config{
 		Version:     opts.Version,
 		BuildTime:   opts.BuildTime,
@@ -217,7 +196,7 @@ func newConfig(opts configOpts) (Config, error) {
 			DataDir:       dataDir,
 		},
 		Chat: chat.Config{
-			Responses:      responses,
+			ResponsesFile:  opts.SlackResponsesFile,
 			UseRegexp:      true,
 			PreferredUsers: opts.PreferredUsers,
 		},
@@ -257,27 +236,4 @@ func Default[T comparable](val T, defaultVal T) T {
 		return defaultVal
 	}
 	return val
-}
-
-func parseJSONFile(filePath string, v interface{}) error {
-	content, err := os.ReadFile(filePath)
-	if err != nil {
-		return fmt.Errorf("read responses file: %w", err)
-	}
-	if err := json.Unmarshal(content, v); err != nil {
-		return fmt.Errorf("unmarshal responses: %w", err)
-	}
-	return nil
-}
-
-func parseYAMLFile(filePath string, v interface{}) error {
-	content, err := os.ReadFile(filePath)
-	if err != nil {
-		return fmt.Errorf("open file: %w", err)
-	}
-
-	if err := yaml.Unmarshal(content, v); err != nil {
-		return fmt.Errorf("unmarshal yaml: %w", err)
-	}
-	return nil
 }

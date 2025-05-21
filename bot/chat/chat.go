@@ -2,11 +2,17 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path"
 	"regexp"
 	"strings"
 	"sync/atomic"
+	"time"
 
+	"github.com/fsnotify/fsnotify"
+	"github.com/goccy/go-yaml"
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 	"go.uber.org/zap"
@@ -24,7 +30,7 @@ type Response struct {
 
 // Config defines the configuration for the Chat feature
 type Config struct {
-	Responses      []Response
+	ResponsesFile  string
 	UseRegexp      bool
 	PreferredUsers []string
 }
@@ -38,10 +44,13 @@ type Chat struct {
 	stopCh      chan struct{}
 	eventsCh    chan slackevents.EventsAPIEvent
 	isConnected atomic.Bool
+	responses   []Response
+	watcher     *fsnotify.Watcher
+	lastModTime time.Time
 }
 
 func NewChat(log *zap.Logger, config Config, client *slack.Client) *Chat {
-	c := &Chat{
+	return &Chat{
 		log:      log,
 		config:   config,
 		regexps:  make(map[string]*regexp.Regexp),
@@ -49,23 +58,6 @@ func NewChat(log *zap.Logger, config Config, client *slack.Client) *Chat {
 		eventsCh: make(chan slackevents.EventsAPIEvent, eventChannelSize),
 		slack:    client,
 	}
-
-	// Compile regular expressions for faster matching
-	for _, resp := range config.Responses {
-		if resp.IsRegexp {
-			re, err := regexp.Compile("(?i)" + resp.Pattern)
-			if err != nil {
-				log.Error("Failed to compile regex pattern",
-					zap.String("pattern", resp.Pattern),
-					zap.Error(err),
-				)
-				continue
-			}
-			c.regexps[resp.Pattern] = re
-		}
-	}
-
-	return c
 }
 
 // ProcessorType returns a description of the processor type
@@ -75,12 +67,45 @@ func (c *Chat) ProcessorType() string {
 
 // Start initializes the Chat feature with a Slack slack
 func (c *Chat) Start(ctx context.Context) error {
+	if c.config.ResponsesFile == "" {
+		return fmt.Errorf("responses file not specified")
+	}
+
+	// Initialize file watcher
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return fmt.Errorf("create file watcher: %w", err)
+	}
+	c.watcher = watcher
+
+	// Get initial file stats and load responses
+	fileInfo, err := os.Stat(c.config.ResponsesFile)
+	if err != nil {
+		return fmt.Errorf("stat responses file: %w", err)
+	}
+	c.lastModTime = fileInfo.ModTime()
+
+	if err := c.readResponses(); err != nil {
+		return fmt.Errorf("read responses file: %w", err)
+	}
+
+	// Add file to watch
+	if err := watcher.Add(c.config.ResponsesFile); err != nil {
+		return fmt.Errorf("watch responses file: %w", err)
+	}
+
 	c.isConnected.Store(true)
 
 	// Start listening for events in a goroutine
 	go c.handleEvents(ctx)
 
-	c.log.Debug("Chat feature started successfully.", zap.Int("responses", len(c.config.Responses)))
+	// Start watching for file changes
+	go c.watchResponsesFile(ctx)
+
+	c.log.Debug("Chat feature started successfully.",
+		zap.Int("responses", len(c.responses)),
+		zap.String("responses_file", c.config.ResponsesFile),
+	)
 	return nil
 }
 
@@ -92,6 +117,10 @@ func (c *Chat) Stop(ctx context.Context) error {
 
 	close(c.stopCh)
 	c.isConnected.Store(false)
+
+	// The watcher is closed in the watchResponsesFile goroutine
+	// when it exits after receiving the stop signal
+
 	return nil
 }
 
@@ -150,7 +179,7 @@ func (c *Chat) handleMessageEvent(ctx context.Context, ev *slackevents.MessageEv
 		zap.String("type", c.ProcessorType()),
 	)
 
-	for _, resp := range c.config.Responses {
+	for _, resp := range c.responses {
 		var isMatch bool
 		if resp.IsRegexp {
 			re, exists := c.regexps[resp.Pattern]
@@ -232,11 +261,126 @@ func (c *Chat) AddResponse(pattern string, message string, isRegexp bool) error 
 		c.regexps[pattern] = re
 	}
 
-	c.config.Responses = append(c.config.Responses, Response{
+	c.responses = append(c.responses, Response{
 		Pattern:  pattern,
 		Message:  message,
 		IsRegexp: isRegexp,
 	})
 
+	return nil
+}
+
+// AddResponse adds a new response pattern dynamically
+func (c *Chat) readResponses() error {
+	var responses []Response
+	ext := path.Ext(c.config.ResponsesFile)
+	switch ext {
+	case ".json":
+		if err := parseJSONFile(c.config.ResponsesFile, &responses); err != nil {
+			return fmt.Errorf("parse responses file: %w", err)
+		}
+	case ".yaml", ".yml":
+		if err := parseYAMLFile(c.config.ResponsesFile, &responses); err != nil {
+			return fmt.Errorf("parse responses file: %w", err)
+		}
+	default:
+		return fmt.Errorf("unsupported responses file format: %s", ext)
+	}
+	c.responses = responses
+
+	// Compile regular expressions for faster matching
+	for _, resp := range c.responses {
+		if resp.IsRegexp {
+			re, err := regexp.Compile("(?i)" + resp.Pattern)
+			if err != nil {
+				c.log.Error("Failed to compile regex pattern",
+					zap.String("pattern", resp.Pattern),
+					zap.Error(err),
+				)
+				continue
+			}
+			c.regexps[resp.Pattern] = re
+		}
+	}
+
+	return nil
+}
+
+// watchResponsesFile monitors the responses file for changes
+func (c *Chat) watchResponsesFile(ctx context.Context) {
+	defer c.watcher.Close()
+
+	for {
+		select {
+		case <-c.stopCh:
+			return
+		case <-ctx.Done():
+			return
+		case event, ok := <-c.watcher.Events:
+			if !ok {
+				return
+			}
+
+			// Check if this is a write or create event
+			if event.Op&(fsnotify.Write|fsnotify.Create) != 0 {
+				// Get file info to check modification time
+				fileInfo, err := os.Stat(c.config.ResponsesFile)
+				if err != nil {
+					c.log.Error("Failed to stat responses file",
+						zap.String("file", c.config.ResponsesFile),
+						zap.Error(err),
+					)
+					continue
+				}
+
+				// Only reload if the file was actually modified (avoids double-triggers)
+				if fileInfo.ModTime().After(c.lastModTime) {
+					c.lastModTime = fileInfo.ModTime()
+					c.log.Info("Responses file changed, reloading",
+						zap.String("file", c.config.ResponsesFile),
+					)
+
+					if err := c.readResponses(); err != nil {
+						c.log.Error("Failed to reload responses file",
+							zap.String("file", c.config.ResponsesFile),
+							zap.Error(err),
+						)
+					} else {
+						c.log.Info("Successfully reloaded responses",
+							zap.String("file", c.config.ResponsesFile),
+							zap.Int("count", len(c.responses)),
+						)
+					}
+				}
+			}
+		case err, ok := <-c.watcher.Errors:
+			if !ok {
+				return
+			}
+			c.log.Error("File watcher error", zap.Error(err))
+		}
+	}
+}
+
+func parseJSONFile(filePath string, v any) error {
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("read responses file: %w", err)
+	}
+	if err := json.Unmarshal(content, v); err != nil {
+		return fmt.Errorf("unmarshal responses: %w", err)
+	}
+	return nil
+}
+
+func parseYAMLFile(filePath string, v any) error {
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("open file: %w", err)
+	}
+
+	if err := yaml.Unmarshal(content, v); err != nil {
+		return fmt.Errorf("unmarshal yaml: %w", err)
+	}
 	return nil
 }

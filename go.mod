@@ -10,6 +10,7 @@ require (
 )
 
 require (
+	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/goccy/go-yaml v1.17.1 // indirect
 	github.com/gorilla/websocket v1.4.2 // indirect
 	go.uber.org/multierr v1.10.0 // indirect
