@@ -83,6 +83,9 @@ func (h *Server) BeginShutdown(ctx context.Context) error {
 }
 
 func (h *Server) Shutdown(ctx context.Context) error {
+	if h.server == nil {
+		return nil
+	}
 	return h.server.Shutdown(ctx)
 }
 

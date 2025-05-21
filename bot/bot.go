@@ -18,15 +18,15 @@ import (
 )
 
 type Bot struct {
-	BuildOpts  config.BuildOpts
-	logger     logger.Logger
-	log        *zap.Logger
-	config     config.Config
-	httpServer *http.Server
-	slack      *slack.Slack
-	obituary   *obituary.Obituary
-	chat       *chat.Chat
-	vibecheck  *vibecheck.Vibecheck
+	BuildOpts config.BuildOpts
+	logger    logger.Logger
+	log       *zap.Logger
+	config    config.Config
+	http      *http.Server
+	slack     *slack.Slack
+	obituary  *obituary.Obituary
+	chat      *chat.Chat
+	vibecheck *vibecheck.Vibecheck
 }
 
 func NewBot(buildOpts config.BuildOpts) *Bot {
@@ -77,7 +77,7 @@ func (s *Bot) Setup(ctx context.Context, cmd *cli.Command) (context.Context, err
 		s.vibecheck = vibecheck.NewVibecheck(s.log, s.config.Vibecheck, s.slack.Client())
 	}
 
-	s.httpServer = http.NewServer(s.log, s.config.Server, s.slack)
+	s.http = http.NewServer(s.log, s.config.Server, s.slack)
 	return ctx, nil
 }
 
@@ -86,15 +86,15 @@ func (s *Bot) Run(runCtx context.Context) error {
 		return fmt.Errorf("start slack: %w", err)
 	}
 
-	if s.chat != nil && s.httpServer != nil {
-		s.httpServer.RegisterEventProcessor(s.chat)
+	if s.chat != nil && s.http != nil {
+		s.http.RegisterEventProcessor(s.chat)
 		if err := s.chat.Start(runCtx); err != nil {
 			return fmt.Errorf("start chat: %w", err)
 		}
 	}
 
-	if s.vibecheck != nil && s.httpServer != nil {
-		s.httpServer.RegisterEventProcessor(s.vibecheck)
+	if s.vibecheck != nil && s.http != nil {
+		s.http.RegisterEventProcessor(s.vibecheck)
 		if err := s.vibecheck.Start(runCtx); err != nil {
 			return fmt.Errorf("start vibecheck: %w", err)
 		}
@@ -106,14 +106,14 @@ func (s *Bot) Run(runCtx context.Context) error {
 		}
 	}
 
-	return s.httpServer.Run(runCtx)
+	return s.http.Run(runCtx)
 }
 
 func (s *Bot) BeginShutdown(ctx context.Context) error {
-	if s.httpServer == nil {
+	if s.http == nil {
 		return nil
 	}
-	if err := s.httpServer.BeginShutdown(ctx); err != nil {
+	if err := s.http.BeginShutdown(ctx); err != nil {
 		return fmt.Errorf("begin shutdown http server: %w", err)
 	}
 	return nil
@@ -122,8 +122,8 @@ func (s *Bot) BeginShutdown(ctx context.Context) error {
 // Shutdown resources in reverse order of the Setup/Run
 func (s *Bot) Shutdown(ctx context.Context) error {
 	var errs error
-	if s.httpServer != nil {
-		if err := s.httpServer.Shutdown(ctx); err != nil {
+	if s.http != nil {
+		if err := s.http.Shutdown(ctx); err != nil {
 			errs = errors.Join(errs, fmt.Errorf("shutdown http server: %w", err))
 		}
 	}
