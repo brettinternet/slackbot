@@ -9,6 +9,7 @@ import (
 	"github.com/urfave/cli/v3"
 	"go.uber.org/zap"
 	"slackbot.arpa/bot/ai"
+	"slackbot.arpa/bot/aichat"
 	"slackbot.arpa/bot/chat"
 	"slackbot.arpa/bot/config"
 	"slackbot.arpa/bot/http"
@@ -30,6 +31,7 @@ type Bot struct {
 	vibecheck     *vibecheck.Vibecheck
 	configWatcher *config.ConfigWatcher
 	ai            *ai.AI
+	aichat        *aichat.AIChat
 }
 
 func NewBot(buildOpts config.BuildOpts) *Bot {
@@ -91,7 +93,7 @@ func (s *Bot) Setup(ctx context.Context, cmd *cli.Command) (context.Context, err
 
 	if config.HasFeature(s.config.Features, config.FeatureAIChat) {
 		s.ai = ai.NewAI(s.log, s.config.AI)
-		// s.aiChat = aichat.NewAIChat(s.log, s.ai)
+		s.aichat = aichat.NewAIChat(s.log, s.config.AIChat, s.slack, s.ai)
 	}
 
 	s.http = http.NewServer(s.log, s.config.Server, s.slack)
@@ -152,11 +154,12 @@ func (s *Bot) Run(runCtx context.Context) error {
 		}
 	}
 
-	// if s.aichat != nil {
-	// 	if err := s.aichat.Start(runCtx); err != nil {
-	// 		return fmt.Errorf("start aichat: %w", err)
-	// 	}
-	// }
+	if s.aichat != nil {
+		s.http.RegisterEventProcessor(s.aichat)
+		if err := s.aichat.Start(runCtx); err != nil {
+			return fmt.Errorf("start aichat: %w", err)
+		}
+	}
 
 	return s.http.Run(runCtx)
 }
@@ -177,6 +180,11 @@ func (s *Bot) Shutdown(ctx context.Context) error {
 	if s.http != nil {
 		if err := s.http.Shutdown(ctx); err != nil {
 			errs = errors.Join(errs, fmt.Errorf("shutdown http server: %w", err))
+		}
+	}
+	if s.aichat != nil {
+		if err := s.aichat.Stop(ctx); err != nil {
+			return fmt.Errorf("stop aichat: %w", err)
 		}
 	}
 	if s.obituary != nil {

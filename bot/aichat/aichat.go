@@ -17,6 +17,8 @@ import (
 	"golang.org/x/time/rate"
 )
 
+const eventChannelSize = 10
+
 type aiService interface {
 	LLM() *openai.LLM
 }
@@ -42,13 +44,16 @@ type AIChat struct {
 	mutex        sync.Mutex
 }
 
-func NewAI(log *zap.Logger, c Config, s slackService, a aiService) *AIChat {
+func NewAIChat(log *zap.Logger, c Config, s slackService, a aiService) *AIChat {
 	return &AIChat{
-		log:     log,
-		config:  c,
-		slack:   s,
-		ai:      a,
-		limiter: rate.NewLimiter(rate.Limit(1), 3),
+		log:          log,
+		config:       c,
+		slack:        s,
+		ai:           a,
+		limiter:      rate.NewLimiter(rate.Limit(1), 3),
+		userPersonas: make(map[string]string),
+		stopCh:       make(chan struct{}),
+		eventsCh:     make(chan slackevents.EventsAPIEvent, eventChannelSize),
 	}
 }
 
