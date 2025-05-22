@@ -221,17 +221,13 @@ func (c *Vibecheck) SetConfig(cfg FileConfig) error {
 
 // checkReinvites periodically checks for users to reinvite
 func (c *Vibecheck) checkReinvites(ctx context.Context) {
-	c.log.Debug("Starting reinvite checker routine")
 	for {
 		select {
 		case <-c.stopCh:
-			c.log.Debug("Reinvite checker routine stopped")
 			return
 		case <-ctx.Done():
-			c.log.Debug("Reinvite checker routine context done")
 			return
 		case <-c.ticker.C:
-			c.log.Debug("Checking for users to reinvite")
 			c.processReinvites(ctx)
 		}
 	}

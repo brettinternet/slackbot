@@ -128,7 +128,6 @@ func (o *Obituary) Start(ctx context.Context) error {
 					o.log.Error("Error checking for deleted users", zap.Error(err))
 				}
 			case <-ctx.Done():
-				o.log.Debug("Obituary service stopping")
 				return
 			}
 		}
@@ -148,7 +147,6 @@ func (o *Obituary) Stop(ctx context.Context) error {
 	if o.ticker != nil {
 		o.ticker.Stop()
 	}
-	o.log.Debug("Obituary service stopped")
 	return nil
 }
 
@@ -250,10 +248,6 @@ func (o *Obituary) checkForDeletedUsers(ctx context.Context) error {
 		}
 	} else {
 		o.log.Debug("No changes in user list, skipping save to disk.")
-	}
-
-	if err := o.saveUsersToDisk(); err != nil {
-		return fmt.Errorf("save users to disk: %w", err)
 	}
 
 	return nil
