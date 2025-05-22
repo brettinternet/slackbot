@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/urfave/cli/v3"
+	"slackbot.arpa/bot/ai"
+	"slackbot.arpa/bot/aichat"
 	"slackbot.arpa/bot/chat"
 	"slackbot.arpa/bot/http"
 	"slackbot.arpa/bot/obituary"
@@ -22,15 +24,16 @@ const (
 	FeatureObituary  Feature = "obituary"
 	FeatureChat      Feature = "chat"
 	FeatureVibecheck Feature = "vibecheck"
+	FeatureAIChat    Feature = "aichat"
 
 	EnvironmentDevelopment Environment = "development"
 	EnvironmentProduction  Environment = "production"
 )
 
-var EnvironmentOptions = []string{EnvironmentDevelopment.String(), EnvironmentProduction.String()}
+var Environments = []string{EnvironmentDevelopment.String(), EnvironmentProduction.String()}
 
 func IsEnvironment(v string) bool {
-	return slices.Contains(EnvironmentOptions, strings.ToLower(v))
+	return slices.Contains(Environments, strings.ToLower(v))
 }
 
 func (f Feature) String() string {
@@ -53,7 +56,7 @@ func environmentFromString(s string) Environment {
 }
 
 var (
-	Features = []Feature{FeatureObituary, FeatureChat, FeatureVibecheck}
+	Features = []Feature{FeatureObituary, FeatureChat, FeatureVibecheck, FeatureAIChat}
 )
 
 func IsFeature(f string) bool {
@@ -98,6 +101,8 @@ func (l BuildOpts) MakeConfig(cmd *cli.Command) (Config, error) {
 		SlackTokenFile:         cmd.String("slack-token-file"),
 		SlackSigningSecret:     cmd.String("slack-signing-secret"),
 		SlackSigningSecretFile: cmd.String("slack-signing-secret-file"),
+		OpenAIAPIKey:           cmd.String("openai-api-key"),
+		OpenAIAPIKeyFile:       cmd.String("openai-api-key-file"),
 		PreferredUsers:         cmd.StringSlice("slack-preferred-users"),
 		PreferredChannels:      cmd.StringSlice("slack-preferred-channels"),
 		ObituaryNotifyChannel:  cmd.String("slack-obituary-notify-channel"),
@@ -121,6 +126,8 @@ type configOpts struct {
 	SlackTokenFile         string
 	SlackSigningSecret     string
 	SlackSigningSecretFile string
+	OpenAIAPIKey           string
+	OpenAIAPIKeyFile       string
 	PreferredUsers         []string
 	PreferredChannels      []string
 	ObituaryNotifyChannel  string
@@ -141,6 +148,8 @@ type Config struct {
 	Obituary    obituary.Config
 	Chat        chat.Config
 	Vibecheck   vibecheck.Config
+	AI          ai.Config
+	AIChat      aichat.Config
 }
 
 func newConfig(opts configOpts) (Config, error) {
@@ -174,6 +183,14 @@ func newConfig(opts configOpts) (Config, error) {
 		}
 	}
 
+	openAIAPIKey := opts.OpenAIAPIKey
+	if opts.OpenAIAPIKeyFile != "" {
+		secretBytes, err := os.ReadFile(opts.OpenAIAPIKeyFile)
+		if err == nil {
+			openAIAPIKey = string(secretBytes)
+		}
+	}
+
 	return Config{
 		Version:     opts.Version,
 		BuildTime:   opts.BuildTime,
@@ -204,6 +221,10 @@ func newConfig(opts configOpts) (Config, error) {
 			PreferredUsers: opts.PreferredUsers,
 			DataDir:        dataDir,
 		},
+		AI: ai.Config{
+			OpenAIAPIKey: openAIAPIKey,
+		},
+		AIChat: aichat.Config{},
 	}, nil
 }
 

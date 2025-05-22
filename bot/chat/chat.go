@@ -76,7 +76,6 @@ func (c *Chat) ProcessorType() string {
 func (c *Chat) Start(ctx context.Context) error {
 	c.isConnected.Store(true)
 
-	// Start listening for events in a goroutine
 	go c.handleEvents(ctx)
 
 	c.log.Debug("Chat feature started successfully.",

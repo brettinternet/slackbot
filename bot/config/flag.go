@@ -42,7 +42,7 @@ func Flags() []cli.Flag {
 				if IsEnvironment(v) {
 					return nil
 				}
-				return cli.Exit(fmt.Errorf("'env' must be %v. Received: %v", strings.Join(EnvironmentOptions, ", "), v), 2)
+				return cli.Exit(fmt.Errorf("'env' must be %v. Received: %v", strings.Join(Environments, ", "), v), 2)
 			},
 		},
 		&cli.StringFlag{
@@ -179,6 +179,31 @@ func MutuallyExclusiveFlags() []cli.MutuallyExclusiveFlags {
 						Action: func(ctx context.Context, cmd *cli.Command, v string) error {
 							if err := validateFileInput(v); err != nil {
 								return cli.Exit(fmt.Errorf("invalid slack signing secret file: %v", err), 2)
+							}
+							return nil
+						},
+					},
+				},
+			},
+		},
+		{
+			Required: true,
+			Flags: [][]cli.Flag{
+				{
+					&cli.StringFlag{
+						Name:    "openai-api-key",
+						Usage:   "OpenAPI API key for AI conversations.",
+						Sources: cli.EnvVars("OPENAI_API_KEY"),
+					},
+				},
+				{
+					&cli.StringFlag{
+						Name:    "openai-api-key-file",
+						Usage:   "Path to OpenAPI API key file.",
+						Sources: cli.EnvVars("OPENAI_API_KEY_FILE"),
+						Action: func(ctx context.Context, cmd *cli.Command, v string) error {
+							if err := validateFileInput(v); err != nil {
+								return cli.Exit(fmt.Errorf("invalid key file: %v", err), 2)
 							}
 							return nil
 						},

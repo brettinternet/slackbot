@@ -185,7 +185,7 @@ func (c *Vibecheck) handleMessageEvent(ctx context.Context, ev *slackevents.Mess
 			ctx,
 			ev.Channel,
 			slack.MsgOptionText(response, false),
-			slack.MsgOptionAsUser(true), // legacy only
+			slack.MsgOptionAsUser(true),
 		)
 		if err != nil {
 			c.log.Error("Failed to post response",

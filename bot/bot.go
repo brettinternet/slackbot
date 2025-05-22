@@ -8,6 +8,7 @@ import (
 
 	"github.com/urfave/cli/v3"
 	"go.uber.org/zap"
+	"slackbot.arpa/bot/ai"
 	"slackbot.arpa/bot/chat"
 	"slackbot.arpa/bot/config"
 	"slackbot.arpa/bot/http"
@@ -28,6 +29,7 @@ type Bot struct {
 	chat          *chat.Chat
 	vibecheck     *vibecheck.Vibecheck
 	configWatcher *config.ConfigWatcher
+	ai            *ai.AI
 }
 
 func NewBot(buildOpts config.BuildOpts) *Bot {
@@ -87,6 +89,11 @@ func (s *Bot) Setup(ctx context.Context, cmd *cli.Command) (context.Context, err
 		s.vibecheck = vibecheck.NewVibecheck(s.log, s.config.Vibecheck, s.slack)
 	}
 
+	if config.HasFeature(s.config.Features, config.FeatureAIChat) {
+		s.ai = ai.NewAI(s.log, s.config.AI)
+		// s.aiChat = aichat.NewAIChat(s.log, s.ai)
+	}
+
 	s.http = http.NewServer(s.log, s.config.Server, s.slack)
 	return ctx, nil
 }
@@ -138,6 +145,18 @@ func (s *Bot) Run(runCtx context.Context) error {
 			return fmt.Errorf("start obituary: %w", err)
 		}
 	}
+
+	if s.ai != nil {
+		if err := s.ai.Start(runCtx); err != nil {
+			return fmt.Errorf("start ai: %w", err)
+		}
+	}
+
+	// if s.aichat != nil {
+	// 	if err := s.aichat.Start(runCtx); err != nil {
+	// 		return fmt.Errorf("start aichat: %w", err)
+	// 	}
+	// }
 
 	return s.http.Run(runCtx)
 }

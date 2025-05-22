@@ -16,6 +16,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/goccy/go-yaml"
 	"go.uber.org/zap"
+	"slackbot.arpa/bot/aichat"
 	"slackbot.arpa/bot/chat"
 	"slackbot.arpa/bot/vibecheck"
 )
@@ -24,6 +25,7 @@ import (
 type FileConfig struct {
 	Chat      chat.FileConfig      `json:"chat" yaml:"chat"`
 	Vibecheck vibecheck.FileConfig `json:"vibecheck" yaml:"vibecheck"`
+	AIChat    aichat.FileConfig    `json:"aichat" yaml:"aichat"`
 }
 
 // ConfigWatcher watches a configuration file for changes and parses its content
