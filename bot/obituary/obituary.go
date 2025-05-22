@@ -169,7 +169,7 @@ func (o *Obituary) fetchAllUsers(ctx context.Context) error {
 
 	// Update our known users map
 	for _, user := range users {
-		if user.Deleted || user.IsBot {
+		if !isValidUser(user) {
 			continue
 		}
 		o.knownUsers[user.ID] = &user
@@ -177,6 +177,10 @@ func (o *Obituary) fetchAllUsers(ctx context.Context) error {
 
 	o.log.Debug("Fetched all users", zap.Int("count", len(o.knownUsers)))
 	return nil
+}
+
+func isValidUser(user slack.User) bool {
+	return user.ID != "" && !user.Deleted && !user.IsBot
 }
 
 // checkForDeletedUsers compares the current user list with our stored list
@@ -195,7 +199,7 @@ func (o *Obituary) checkForDeletedUsers(ctx context.Context) error {
 
 	newUserMap := make(map[string]slack.User)
 	for _, user := range users {
-		if user.Deleted {
+		if !isValidUser(user) {
 			continue
 		}
 		newUserMap[user.ID] = user
