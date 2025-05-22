@@ -76,15 +76,15 @@ func (s *Bot) Setup(ctx context.Context, cmd *cli.Command) (context.Context, err
 	}
 
 	if config.HasFeature(s.config.Features, config.FeatureObituary) {
-		s.obituary = obituary.NewObituary(s.log, s.config.Obituary, s.slack.Client())
+		s.obituary = obituary.NewObituary(s.log, s.config.Obituary, s.slack)
 	}
 
 	if config.HasFeature(s.config.Features, config.FeatureChat) {
-		s.chat = chat.NewChat(s.log, s.config.Chat, s.slack.Client())
+		s.chat = chat.NewChat(s.log, s.config.Chat, s.slack)
 	}
 
 	if config.HasFeature(s.config.Features, config.FeatureVibecheck) {
-		s.vibecheck = vibecheck.NewVibecheck(s.log, s.config.Vibecheck, s.slack.Client())
+		s.vibecheck = vibecheck.NewVibecheck(s.log, s.config.Vibecheck, s.slack)
 	}
 
 	s.http = http.NewServer(s.log, s.config.Server, s.slack)

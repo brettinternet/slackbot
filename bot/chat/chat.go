@@ -25,6 +25,10 @@ type Response struct {
 	IsRegexp       bool     `json:"is_regexp" yaml:"is_regexp"`             // Whether the pattern is a regular expression
 }
 
+type slackService interface {
+	Client() *slack.Client
+}
+
 // FileConfig represents the structure of the chat section in the config file
 type FileConfig struct {
 	Responses []Response `json:"responses" yaml:"responses"`
@@ -44,7 +48,7 @@ type ChatConfig struct {
 type Chat struct {
 	log         *zap.Logger
 	config      Config
-	slack       *slack.Client
+	slack       slackService
 	regexps     map[string]*regexp.Regexp
 	stopCh      chan struct{}
 	eventsCh    chan slackevents.EventsAPIEvent
@@ -52,14 +56,14 @@ type Chat struct {
 	fileConfig  FileConfig
 }
 
-func NewChat(log *zap.Logger, config Config, client *slack.Client) *Chat {
+func NewChat(log *zap.Logger, c Config, s slackService) *Chat {
 	return &Chat{
 		log:      log,
-		config:   config,
+		config:   c,
 		regexps:  make(map[string]*regexp.Regexp),
 		stopCh:   make(chan struct{}),
 		eventsCh: make(chan slackevents.EventsAPIEvent, eventChannelSize),
-		slack:    client,
+		slack:    s,
 	}
 }
 
@@ -178,7 +182,7 @@ func (c *Chat) handleMessageEvent(ctx context.Context, ev *slackevents.MessageEv
 
 			if len(resp.Reactions) > 0 {
 				for _, reaction := range resp.Reactions {
-					err := c.slack.AddReactionContext(
+					err := c.slack.Client().AddReactionContext(
 						ctx,
 						reaction,
 						slack.NewRefToMessage(ev.Channel, ev.TimeStamp),
@@ -205,7 +209,7 @@ func (c *Chat) handleMessageEvent(ctx context.Context, ev *slackevents.MessageEv
 					if msg == "" {
 						continue
 					}
-					_, _, err := c.slack.PostMessageContext(
+					_, _, err := c.slack.Client().PostMessageContext(
 						ctx,
 						ev.Channel,
 						slack.MsgOptionText(msg, false),

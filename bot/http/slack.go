@@ -10,10 +10,6 @@ import (
 	"go.uber.org/zap"
 )
 
-type slackVerifier interface {
-	VerifyRequest(http.Header, []byte) error
-}
-
 // slackEventProcessor is an interface for components that want to process Slack events
 type slackEventProcessor interface {
 	PushEvent(slackevents.EventsAPIEvent)
@@ -53,7 +49,7 @@ func (h *Server) handleSlackEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.slackVerifier.VerifyRequest(r.Header, body); err != nil {
+	if err := h.slack.VerifyRequest(r.Header, body); err != nil {
 		h.log.Error("Failed to verify request.", zap.Error(err))
 		w.WriteHeader(http.StatusUnauthorized)
 		return

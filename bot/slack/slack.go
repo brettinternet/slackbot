@@ -17,9 +17,10 @@ type Config struct {
 }
 
 type Slack struct {
-	log    *zap.Logger
-	config Config
-	client *slack.Client
+	log      *zap.Logger
+	config   Config
+	client   *slack.Client
+	authResp *slack.AuthTestResponse
 }
 
 func NewSlack(log *zap.Logger, config Config) *Slack {
@@ -40,8 +41,10 @@ func (s *Slack) Setup(ctx context.Context) error {
 
 	s.client = slack.New(s.config.Token, clientOpts...)
 
-	if _, err := s.client.AuthTest(); err != nil {
+	if resp, err := s.client.AuthTest(); err != nil {
 		return fmt.Errorf("authenticate with Slack: %w", err)
+	} else {
+		s.authResp = resp
 	}
 
 	return nil
@@ -89,4 +92,8 @@ func (s *Slack) VerifyRequest(header http.Header, body []byte) error {
 	}
 
 	return nil
+}
+
+func (s *Slack) OrgURL() string {
+	return s.authResp.URL
 }

@@ -15,6 +15,10 @@ import (
 
 const DefaultServerPort = 4200
 
+type slackService interface {
+	VerifyRequest(http.Header, []byte) error
+}
+
 type Config struct {
 	ServerHost     string
 	ServerPort     uint32
@@ -28,16 +32,16 @@ type Server struct {
 	serveMux             *http.ServeMux
 	isShuttingDown       atomic.Bool
 	isReady              atomic.Bool
-	slackVerifier        slackVerifier
+	slack                slackService
 	slackEventProcessors []slackEventProcessor
 }
 
-func NewServer(log *zap.Logger, config Config, slack slackVerifier) *Server {
+func NewServer(log *zap.Logger, config Config, slack slackService) *Server {
 	h := &Server{
-		log:           log,
-		serveMux:      http.NewServeMux(),
-		config:        config,
-		slackVerifier: slack,
+		log:      log,
+		serveMux: http.NewServeMux(),
+		config:   config,
+		slack:    slack,
 	}
 	h.registerHealthEndpoints()
 	h.registerSlackEndpoints()

@@ -19,6 +19,11 @@ import (
 
 const watchInterval = 1 * time.Minute
 
+type slackService interface {
+	Client() *slack.Client
+	OrgURL() string
+}
+
 type Config struct {
 	NotifyChannel string
 	DataDir       string
@@ -33,7 +38,7 @@ type User struct {
 
 type Obituary struct {
 	log           *zap.Logger
-	slack         *slack.Client
+	slack         slackService
 	notifyChannel string
 	ticker        *time.Ticker
 	cancel        context.CancelFunc
@@ -42,26 +47,26 @@ type Obituary struct {
 	usersFile     string
 }
 
-func NewObituary(log *zap.Logger, config Config, client *slack.Client) *Obituary {
-	if config.DataDir != "" {
-		if _, err := os.Stat(config.DataDir); os.IsNotExist(err) {
-			if err := os.MkdirAll(config.DataDir, 0755); err != nil {
-				log.Error("Failed to create data directory", zap.String("dir", config.DataDir), zap.Error(err))
+func NewObituary(log *zap.Logger, c Config, s slackService) *Obituary {
+	if c.DataDir != "" {
+		if _, err := os.Stat(c.DataDir); os.IsNotExist(err) {
+			if err := os.MkdirAll(c.DataDir, 0755); err != nil {
+				log.Error("Failed to create data directory", zap.String("dir", c.DataDir), zap.Error(err))
 			}
 		}
 	}
 
 	usersFile := ""
-	if config.DataDir != "" {
-		usersFile = filepath.Join(config.DataDir, "obituary_users.json")
+	if c.DataDir != "" {
+		usersFile = filepath.Join(c.DataDir, "obituary_users.json")
 	}
 
 	return &Obituary{
 		log:           log,
-		notifyChannel: config.NotifyChannel,
+		notifyChannel: c.NotifyChannel,
 		knownUsers:    make(map[string]*slack.User),
 		usersFile:     usersFile,
-		slack:         client,
+		slack:         s,
 	}
 }
 
@@ -160,7 +165,7 @@ func (o *Obituary) fetchAllUsers(ctx context.Context) error {
 	var users []slack.User
 	var err error
 
-	users, err = o.slack.GetUsersContext(ctx)
+	users, err = o.slack.Client().GetUsersContext(ctx)
 	if err != nil {
 		return err
 	}
@@ -190,7 +195,7 @@ func (o *Obituary) checkForDeletedUsers(ctx context.Context) error {
 	maps.Copy(currentUsers, o.knownUsers)
 	o.mutex.Unlock()
 
-	users, err := o.slack.GetUsersContext(ctx)
+	users, err := o.slack.Client().GetUsersContext(ctx)
 	if err != nil {
 		return err
 	}
@@ -253,6 +258,7 @@ func (o *Obituary) checkForDeletedUsers(ctx context.Context) error {
 	return nil
 }
 
+// TODO: batch attachments together in single message for multiple users
 // notifyUserDeleted sends a notification to the configured channel about a deleted user
 func (o *Obituary) notifyUserDeleted(ctx context.Context, user *slack.User) {
 	o.log.Info("User deleted.", zap.String("user_id", user.ID), zap.String("user_name", user.RealName))
@@ -269,7 +275,7 @@ func (o *Obituary) notifyUserDeleted(ctx context.Context, user *slack.User) {
 	}
 
 	message := fmt.Sprintf("%s %s has been deleted from the Slack organization.", userTitle, identity)
-	profileLink := fmt.Sprintf("https://slack.com/team/%s", user.ID)
+	profileLink := fmt.Sprintf("%steam/%s", o.slack.OrgURL(), user.ID)
 	actions := []slack.AttachmentAction{
 		{
 			Type: "button",
@@ -294,7 +300,7 @@ func (o *Obituary) notifyUserDeleted(ctx context.Context, user *slack.User) {
 		Actions:    actions,
 	}
 
-	_, _, err := o.slack.PostMessageContext(
+	_, _, err := o.slack.Client().PostMessageContext(
 		ctx,
 		o.notifyChannel,
 		slack.MsgOptionAttachments(attachment),
@@ -312,7 +318,7 @@ func linkedinURL(name string) string {
 // sendStartupMessage sends a notification to the configured channel to confirm the bot is running
 // but only if the bot hasn't posted any messages to the channel before
 func (o *Obituary) sendStartupMessage(ctx context.Context) {
-	authTest, err := o.slack.AuthTestContext(ctx)
+	authTest, err := o.slack.Client().AuthTestContext(ctx)
 	if err != nil {
 		o.log.Error("Failed to get bot identity, sending notification anyway", zap.Error(err))
 	} else {
@@ -324,7 +330,7 @@ func (o *Obituary) sendStartupMessage(ctx context.Context) {
 			return
 		}
 
-		history, err := o.slack.GetConversationHistoryContext(ctx, &slack.GetConversationHistoryParameters{
+		history, err := o.slack.Client().GetConversationHistoryContext(ctx, &slack.GetConversationHistoryParameters{
 			ChannelID: o.notifyChannel,
 			Limit:     100,
 		})
@@ -353,7 +359,7 @@ func (o *Obituary) sendStartupMessage(ctx context.Context) {
 		Ts:         json.Number(fmt.Sprintf("%d", time.Now().Unix())),
 	}
 
-	_, _, err = o.slack.PostMessageContext(
+	_, _, err = o.slack.Client().PostMessageContext(
 		ctx,
 		o.notifyChannel,
 		slack.MsgOptionAttachments(attachment),
@@ -461,7 +467,7 @@ func (o *Obituary) validateChannel(ctx context.Context) bool {
 			zap.String("channel", o.notifyChannel))
 	}
 
-	_, err := o.slack.GetConversationInfoContext(ctx, &slack.GetConversationInfoInput{
+	_, err := o.slack.Client().GetConversationInfoContext(ctx, &slack.GetConversationInfoInput{
 		ChannelID:     o.notifyChannel,
 		IncludeLocale: false,
 	})

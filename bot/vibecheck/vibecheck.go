@@ -17,6 +17,10 @@ const eventChannelSize = 100
 
 var pattern = regexp.MustCompile(`(?i).*vibe.*`)
 
+type slackService interface {
+	Client() *slack.Client
+}
+
 type FileConfig struct {
 	GoodReactions []string `json:"good_reactions" yaml:"good_reactions"`
 	GoodText      []string `json:"good_text" yaml:"good_text"`
@@ -33,7 +37,7 @@ type Config struct {
 type Vibecheck struct {
 	log         *zap.Logger
 	config      Config
-	slack       *slack.Client
+	slack       slackService
 	isConnected atomic.Bool
 	stopCh      chan struct{}
 	eventsCh    chan slackevents.EventsAPIEvent
@@ -43,13 +47,13 @@ type Vibecheck struct {
 	fileConfig  FileConfig
 }
 
-func NewVibecheck(log *zap.Logger, config Config, client *slack.Client) *Vibecheck {
+func NewVibecheck(log *zap.Logger, config Config, s slackService) *Vibecheck {
 	return &Vibecheck{
 		log:         log,
 		config:      config,
 		stopCh:      make(chan struct{}),
 		eventsCh:    make(chan slackevents.EventsAPIEvent, eventChannelSize),
-		slack:       client,
+		slack:       s,
 		kickedUsers: newKickedUsersManager(log, config.DataDir),
 		ticker:      time.NewTicker(10 * time.Second),         // Check more frequently during debugging
 		dedupe:      newMessageDeduplicator(30 * time.Second), // Remember messages for 30 seconds
@@ -71,7 +75,7 @@ func (c *Vibecheck) Start(ctx context.Context) error {
 	// Start the reinvite checker goroutine
 	go c.checkReinvites(ctx)
 
-	c.log.Debug("Vibecheck feature started successfully.", zap.Any("config", c.fileConfig))
+	c.log.Debug("Vibecheck feature started successfully.")
 	return nil
 }
 
@@ -167,7 +171,7 @@ func (c *Vibecheck) handleMessageEvent(ctx context.Context, ev *slackevents.Mess
 		if passed {
 			reaction = "ok"
 		}
-		err := c.slack.AddReactionContext(ctx, reaction, slack.NewRefToMessage(ev.Channel, ev.TimeStamp))
+		err := c.slack.Client().AddReactionContext(ctx, reaction, slack.NewRefToMessage(ev.Channel, ev.TimeStamp))
 		if err != nil {
 			c.log.Error("Failed to add reaction",
 				zap.String("channel", ev.Channel),
@@ -177,7 +181,7 @@ func (c *Vibecheck) handleMessageEvent(ctx context.Context, ev *slackevents.Mess
 		}
 
 		response := randomResponse(passed, c.fileConfig)
-		_, _, err = c.slack.PostMessageContext(
+		_, _, err = c.slack.Client().PostMessageContext(
 			ctx,
 			ev.Channel,
 			slack.MsgOptionText(response, false),
@@ -195,7 +199,7 @@ func (c *Vibecheck) handleMessageEvent(ctx context.Context, ev *slackevents.Mess
 			c.kickedUsers.AddKickedUser(ev.User, ev.Channel, 5*time.Minute)
 
 			time.AfterFunc(5*time.Second, func() {
-				if err := c.slack.KickUserFromConversationContext(ctx, ev.Channel, ev.User); err != nil {
+				if err := c.slack.Client().KickUserFromConversationContext(ctx, ev.Channel, ev.User); err != nil {
 					c.log.Error("Failed to kick user from channel",
 						zap.String("channel", ev.Channel),
 						zap.String("user", ev.User),
@@ -249,7 +253,7 @@ func (c *Vibecheck) processReinvites(ctx context.Context) {
 			zap.Time("reinvite_at", user.ReinviteAt),
 		)
 
-		_, err := c.slack.InviteUsersToConversationContext(
+		_, err := c.slack.Client().InviteUsersToConversationContext(
 			ctx,
 			user.ChannelID,
 			user.UserID,
