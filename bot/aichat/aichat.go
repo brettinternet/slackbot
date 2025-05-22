@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
@@ -15,6 +16,7 @@ import (
 	"github.com/tmc/langchaingo/prompts"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
+	"slackbot.arpa/tools/random"
 )
 
 const eventChannelSize = 10
@@ -32,28 +34,28 @@ type FileConfig struct{}
 type Config struct{}
 
 type AIChat struct {
-	log          *zap.Logger
-	config       Config
-	slack        slackService
-	ai           aiService
-	stopCh       chan struct{}
-	eventsCh     chan slackevents.EventsAPIEvent
-	isConnected  atomic.Bool
-	limiter      *rate.Limiter
-	userPersonas map[string]string
-	mutex        sync.Mutex
+	log            *zap.Logger
+	config         Config
+	slack          slackService
+	ai             aiService
+	stopCh         chan struct{}
+	eventsCh       chan slackevents.EventsAPIEvent
+	isConnected    atomic.Bool
+	limiter        *rate.Limiter
+	stickyPersonas map[string]string // userID -> personaName
+	mutex          sync.Mutex
 }
 
 func NewAIChat(log *zap.Logger, c Config, s slackService, a aiService) *AIChat {
 	return &AIChat{
-		log:          log,
-		config:       c,
-		slack:        s,
-		ai:           a,
-		limiter:      rate.NewLimiter(rate.Limit(1), 3),
-		userPersonas: make(map[string]string),
-		stopCh:       make(chan struct{}),
-		eventsCh:     make(chan slackevents.EventsAPIEvent, eventChannelSize),
+		log:            log,
+		config:         c,
+		slack:          s,
+		ai:             a,
+		limiter:        rate.NewLimiter(rate.Every(3*time.Minute), 5),
+		stickyPersonas: make(map[string]string),
+		stopCh:         make(chan struct{}),
+		eventsCh:       make(chan slackevents.EventsAPIEvent, eventChannelSize),
 	}
 }
 
@@ -77,6 +79,11 @@ func (a *AIChat) Stop(ctx context.Context) error {
 // PushEvent adds an event to be processed by the AIChat feature
 func (a *AIChat) PushEvent(event slackevents.EventsAPIEvent) {
 	if !a.isConnected.Load() {
+		return
+	}
+
+	// 40% chance to drop the event
+	if random.Bool(0.6) {
 		return
 	}
 
@@ -131,11 +138,11 @@ type UserDetails struct {
 func (a *AIChat) userPersona(userID string) string {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
-	if personaName, ok := a.userPersonas[userID]; ok {
+	if personaName, ok := a.stickyPersonas[userID]; ok {
 		return personaName
 	}
 	personaName := randomPersonaName()
-	a.userPersonas[userID] = personaName
+	a.stickyPersonas[userID] = personaName
 	return personaName
 }
 
@@ -176,9 +183,14 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, ev *slackevents.Message
 		)
 		return
 	}
+	maxLength := 300
+	if random.Bool(0.05) {
+		maxLength = 1000
+	}
 	completion, err := a.ai.LLM().Call(ctx, content,
-		llms.WithTemperature(1.5),
-		llms.WithMaxTokens(300),
+		llms.WithTemperature(random.Float(0.3, 1.0)),
+		llms.WithMaxTokens(1024),
+		llms.WithMaxLength(random.Int(3, maxLength)),
 		llms.WithTopP(0.9),
 		llms.WithFrequencyPenalty(0.5),
 		llms.WithStopWords([]string{
@@ -218,7 +230,8 @@ func chatPrompt(input string, u UserDetails, personaName string) (string, error)
 	prompt := prompts.NewChatPromptTemplate([]prompts.MessageFormatter{
 		prompts.NewSystemMessagePromptTemplate(persona, nil),
 		prompts.NewSystemMessagePromptTemplate(
-			`Your messages are as terse as possible to keep messages short.\n
+			`Your messages are as terse as possible to keep messages short.
+			Do your best to always refer to what the user's query.\n
 			Details about the user:
 			username={{.username}}, first name={{.firstName}}, last name={{.lastName}}, timezone={{.timezone}}.\n
 			Prefer referring to the user by their first name when available.

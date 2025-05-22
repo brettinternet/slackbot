@@ -11,6 +11,7 @@ import (
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 	"go.uber.org/zap"
+	"slackbot.arpa/tools/random"
 )
 
 const eventChannelSize = 100
@@ -166,7 +167,7 @@ func (c *Vibecheck) handleMessageEvent(ctx context.Context, ev *slackevents.Mess
 			weight = 0.2
 		}
 
-		passed := randomBool(weight)
+		passed := random.Bool(weight)
 		reaction := "vibecheck"
 		if passed {
 			reaction = "ok"

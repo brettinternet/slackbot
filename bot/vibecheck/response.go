@@ -2,8 +2,8 @@ package vibecheck
 
 import (
 	"fmt"
-	"math/rand"
-	"time"
+
+	"slackbot.arpa/tools/random"
 )
 
 var goodEmojis = []string{
@@ -22,28 +22,21 @@ var badText = []string{
 	"V I B E C H E C K - F A I L E D",
 }
 
-func randomString(values []string) string {
-	rand.New(rand.NewSource(time.Now().UnixNano()))
-	return values[rand.Intn(len(values))]
-}
-
-func randomBool(weight float64) bool {
-	if weight < 0.0 || weight > 1.0 {
-		weight = 0.8
-	}
-	rand.New(rand.NewSource(time.Now().UnixNano()))
-	return rand.Float64() < weight
-}
-
 func randomResponse(passed bool, c FileConfig) string {
 	emojis := withDefault(c.GoodReactions, goodEmojis)
-	texts := withDefault(c.GoodText, goodEmojis)
+	texts := withDefault(c.GoodText, goodText)
 	if !passed {
 		emojis = withDefault(c.BadReactions, badEmojis)
 		texts = withDefault(c.BadText, badText)
 	}
-	e := randomString(emojis)
-	t := randomString(texts)
+	e := random.String(emojis)
+	if e[0] != ':' {
+		e = ":" + e
+	}
+	if e[len(e)-1] != ':' {
+		e = e + ":"
+	}
+	t := random.String(texts)
 	return fmt.Sprintf("%s %s %s %s %s %s %s", e, e, e, t, e, e, e)
 }
 
