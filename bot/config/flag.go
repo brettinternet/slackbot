@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
-	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -84,11 +82,20 @@ func Flags() []cli.Flag {
 			Sources: cli.EnvVars("SERVER_PORT"),
 		},
 		&cli.StringFlag{
-			Name:        "config-file",
-			Aliases:     []string{"config", "c"},
-			Usage:       "Path to yaml or json file of chat responses definition.",
-			Value:       "./config.yaml",
-			Sources:     cli.EnvVars("CONFIG_FILE"),
+			Name:    "config-file",
+			Aliases: []string{"config", "c"},
+			Usage:   "Path to yaml or json file of chat responses definition.",
+			Value:   "./config.yaml",
+			Sources: cli.EnvVars("CONFIG_FILE"),
+			Action: func(ctx context.Context, cmd *cli.Command, v string) error {
+				if v == "" {
+					return nil
+				}
+				if err := validateFileInput(v); err != nil {
+					return cli.Exit(fmt.Errorf("invalid config file '%s': %w", v, err), 2)
+				}
+				return nil
+			},
 			Destination: &configFile,
 		},
 		&cli.StringSliceFlag{
@@ -216,20 +223,4 @@ func validateFileInput(file string) error {
 		}
 	}
 	return nil
-}
-
-func validateURLInput(input string) error {
-	if input == "" {
-		return errors.New("URL is required")
-	} else {
-		u, err := url.ParseRequestURI(input)
-		if err != nil {
-			return fmt.Errorf("invalid url '%v': %v", input, err)
-		}
-		host, _, err := net.SplitHostPort(u.Host)
-		if err != nil || host == "" {
-			return fmt.Errorf("invalid url '%v': %v", input, err)
-		}
-		return nil
-	}
 }

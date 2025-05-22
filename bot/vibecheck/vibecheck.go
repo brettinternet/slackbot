@@ -18,10 +18,10 @@ const eventChannelSize = 100
 var pattern = regexp.MustCompile(`(?i).*vibe.*`)
 
 type FileConfig struct {
-	GoodReactions []string
-	GoodText      []string
-	BadReactions  []string
-	BadText       []string
+	GoodReactions []string `json:"good_reactions" yaml:"good_reactions"`
+	GoodText      []string `json:"good_text" yaml:"good_text"`
+	BadReactions  []string `json:"bad_reactions" yaml:"bad_reactions"`
+	BadText       []string `json:"bad_text" yaml:"bad_text"`
 }
 
 type Config struct {
@@ -71,7 +71,7 @@ func (c *Vibecheck) Start(ctx context.Context) error {
 	// Start the reinvite checker goroutine
 	go c.checkReinvites(ctx)
 
-	c.log.Debug("Vibecheck feature started successfully.")
+	c.log.Debug("Vibecheck feature started successfully.", zap.Any("config", c.fileConfig))
 	return nil
 }
 

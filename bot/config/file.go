@@ -129,7 +129,7 @@ func (w *ConfigWatcher) GetConfig() FileConfig {
 // loadConfig reads and parses the configuration file
 func (w *ConfigWatcher) loadConfig() error {
 	var config FileConfig
-	if err := ReadConfig(w.filePath, &config); err != nil {
+	if err := readConfig(w.filePath, &config); err != nil {
 		return fmt.Errorf("read config: %w", err)
 	}
 
@@ -212,8 +212,8 @@ func (w *ConfigWatcher) notifyCallbacks() {
 	}
 }
 
-// ReadConfig reads and parses a config file into the provided struct
-func ReadConfig(filePath string, v any) error {
+// readConfig reads and parses a config file into the provided struct
+func readConfig(filePath string, v any) error {
 	ext := filepath.Ext(filePath)
 
 	content, err := os.ReadFile(filePath)
