@@ -41,7 +41,8 @@ type AIChat struct {
 	stopCh         chan struct{}
 	eventsCh       chan slackevents.EventsAPIEvent
 	isConnected    atomic.Bool
-	limiter        *rate.Limiter
+	eventlimiter   *rate.Limiter
+	mentionLimiter *rate.Limiter
 	stickyPersonas map[string]string // userID -> personaName
 	mutex          sync.Mutex
 }
@@ -52,7 +53,8 @@ func NewAIChat(log *zap.Logger, c Config, s slackService, a aiService) *AIChat {
 		config:         c,
 		slack:          s,
 		ai:             a,
-		limiter:        rate.NewLimiter(rate.Every(3*time.Minute), 5),
+		eventlimiter:   rate.NewLimiter(rate.Every(3*time.Minute), 5),
+		mentionLimiter: rate.NewLimiter(rate.Every(1*time.Minute), 3),
 		stickyPersonas: make(map[string]string),
 		stopCh:         make(chan struct{}),
 		eventsCh:       make(chan slackevents.EventsAPIEvent, eventChannelSize),
@@ -82,11 +84,6 @@ func (a *AIChat) PushEvent(event slackevents.EventsAPIEvent) {
 		return
 	}
 
-	// 40% chance to drop the event
-	if random.Bool(0.6) {
-		return
-	}
-
 	select {
 	case a.eventsCh <- event:
 		// Event pushed successfully
@@ -104,9 +101,7 @@ func (a *AIChat) handleEvents(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case event := <-a.eventsCh:
-			if a.limiter.Allow() {
-				a.processEvent(ctx, event)
-			}
+			a.processEvent(ctx, event)
 		}
 	}
 }
@@ -117,12 +112,39 @@ func (a *AIChat) processEvent(ctx context.Context, event slackevents.EventsAPIEv
 	case slackevents.CallbackEvent:
 		innerEvent := event.InnerEvent
 		switch ev := innerEvent.Data.(type) {
-		case *slackevents.MessageEvent:
+		case *slackevents.AppMentionEvent:
 			// Ignore bot messages to prevent loops
 			if ev.BotID != "" || ev.User == "" {
 				return
 			}
-			a.handleMessageEvent(ctx, ev)
+			if !a.mentionLimiter.Allow() {
+				return
+			}
+			a.handleMessageEvent(ctx, eventMessage{
+				UserID:   ev.User,
+				Channel:  ev.Channel,
+				Text:     ev.Text,
+				Username: "",
+			})
+		case *slackevents.MessageEvent:
+			// TODO: Queue messages received during rate limit and pick one to respond to
+			// Ignore bot messages to prevent loops
+			if ev.BotID != "" || ev.User == "" {
+				return
+			}
+			if !a.eventlimiter.Allow() {
+				return
+			}
+			// 40% chance to drop the event where the bot is not mentioned
+			if random.Bool(0.6) {
+				return
+			}
+			a.handleMessageEvent(ctx, eventMessage{
+				UserID:   ev.User,
+				Channel:  ev.Channel,
+				Text:     ev.Text,
+				Username: ev.Username,
+			})
 		}
 	}
 }
@@ -134,7 +156,7 @@ type UserDetails struct {
 	TZ        string
 }
 
-// handleMessageEvent processes a message event and responds if it matches a pattern
+// handleMessageEvent processes a eventMessage event and responds if it matches a pattern
 func (a *AIChat) userPersona(userID string) string {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
@@ -146,22 +168,29 @@ func (a *AIChat) userPersona(userID string) string {
 	return personaName
 }
 
-func (a *AIChat) handleMessageEvent(ctx context.Context, ev *slackevents.MessageEvent) {
-	message := strings.TrimSpace(ev.Text)
+type eventMessage struct {
+	UserID   string
+	Username string
+	Channel  string
+	Text     string
+}
 
-	a.log.Debug("Processing message",
-		zap.String("user", ev.User),
-		zap.String("channel", ev.Channel),
-		zap.String("text", message),
+func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
+	eventMessage := strings.TrimSpace(m.Text)
+
+	a.log.Debug("Processing eventMessage",
+		zap.String("user", m.UserID),
+		zap.String("channel", m.Channel),
+		zap.String("text", eventMessage),
 		zap.String("type", a.ProcessorType()),
 	)
 
-	user, err := a.slack.Client().GetUserInfo(ev.User)
+	user, err := a.slack.Client().GetUserInfo(m.UserID)
 	if err != nil {
 		a.log.Error("Failed to get user info",
-			zap.String("user", ev.User),
-			zap.String("channel", ev.Channel),
-			zap.String("text", message),
+			zap.String("user", m.UserID),
+			zap.String("channel", m.Channel),
+			zap.String("text", eventMessage),
 			zap.Error(err),
 		)
 	}
@@ -169,16 +198,16 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, ev *slackevents.Message
 	if user != nil {
 		userDetails = UserDetails{FirstName: user.Profile.FirstName, LastName: user.Profile.LastName, TZ: user.TZ}
 	} else {
-		userDetails = UserDetails{Username: ev.Username}
+		userDetails = UserDetails{Username: m.Username}
 	}
 
-	personaName := a.userPersona(ev.User)
-	content, err := chatPrompt(ev.Text, userDetails, personaName)
+	personaName := a.userPersona(m.UserID)
+	content, err := chatPrompt(m.Text, userDetails, personaName)
 	if err != nil {
 		a.log.Error("Failed to format prompt",
-			zap.String("user", ev.User),
-			zap.String("channel", ev.Channel),
-			zap.String("text", message),
+			zap.String("user", m.UserID),
+			zap.String("channel", m.Channel),
+			zap.String("text", eventMessage),
 			zap.Error(err),
 		)
 		return
@@ -200,22 +229,22 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, ev *slackevents.Message
 		}))
 	if err != nil {
 		a.log.Error("Failed to generate content",
-			zap.String("user", ev.User),
-			zap.String("channel", ev.Channel),
-			zap.String("text", message),
+			zap.String("user", m.UserID),
+			zap.String("channel", m.Channel),
+			zap.String("text", eventMessage),
 			zap.Error(err),
 		)
 		return
 	}
 	_, _, err = a.slack.Client().PostMessageContext(
 		ctx,
-		ev.Channel,
+		m.Channel,
 		slack.MsgOptionText(completion, false),
 		slack.MsgOptionAsUser(true),
 	)
 	if err != nil {
 		a.log.Error("Failed to post response",
-			zap.String("channel", ev.Channel),
+			zap.String("channel", m.Channel),
 			zap.Error(err),
 		)
 		return
@@ -231,7 +260,8 @@ func chatPrompt(input string, u UserDetails, personaName string) (string, error)
 		prompts.NewSystemMessagePromptTemplate(persona, nil),
 		prompts.NewSystemMessagePromptTemplate(
 			`Your messages are as terse as possible to keep messages short.
-			Do your best to always refer to what the user's query.\n
+			Do your best to always refer to what the user's query,
+			however you are part of a larger conversation and so participate as a general member of the crowd.\n
 			Details about the user:
 			username={{.username}}, first name={{.firstName}}, last name={{.lastName}}, timezone={{.timezone}}.\n
 			Prefer referring to the user by their first name when available.
