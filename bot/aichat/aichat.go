@@ -165,7 +165,8 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, ev *slackevents.Message
 		userDetails = UserDetails{Username: ev.Username}
 	}
 
-	content, err := chatPrompt(ev.Text, userDetails, a.userPersona(ev.User))
+	personaName := a.userPersona(ev.User)
+	content, err := chatPrompt(ev.Text, userDetails, personaName)
 	if err != nil {
 		a.log.Error("Failed to format prompt",
 			zap.String("user", ev.User),
@@ -176,9 +177,15 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, ev *slackevents.Message
 		return
 	}
 	completion, err := a.ai.LLM().Call(ctx, content,
-		llms.WithMaxTokens(1024),
-		llms.WithTemperature(2.0),
-		llms.WithMaxLength(1024))
+		llms.WithTemperature(1.5),
+		llms.WithMaxTokens(300),
+		llms.WithTopP(0.9),
+		llms.WithFrequencyPenalty(0.5),
+		llms.WithStopWords([]string{
+			"\n\n",
+			"Human:",
+			"User:",
+		}))
 	if err != nil {
 		a.log.Error("Failed to generate content",
 			zap.String("user", ev.User),
