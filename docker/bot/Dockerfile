@@ -1,12 +1,9 @@
-ARG IMAGE_VERSION=1.24-alpine3.21
-FROM golang:${IMAGE_VERSION}
+ARG BUILDER_IMAGE_VERSION=1.24-alpine3.21
+FROM golang:${BUILDER_IMAGE_VERSION} as builder
 
 WORKDIR /app
 
-RUN apk add --no-cache inotify-tools
-
 COPY go.mod go.sum ./
-
 RUN go mod download
 
 COPY . .
@@ -22,4 +19,15 @@ RUN go build -ldflags "-s -w \
     -o ./main \
     cmd/bot/main.go
 
-CMD ["./main"]
+# ---
+
+ARG RUNTIME_IMAGE_VERSION=3.21
+FROM alpine:${RUNTIME_IMAGE_VERSION}
+
+# For fsnotify
+RUN apk add --no-cache inotify-tools
+
+COPY --from=builder /app/main /app/
+
+EXPOSE 8080
+CMD ["/app/main"]
