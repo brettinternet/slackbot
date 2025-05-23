@@ -136,7 +136,7 @@ func (a *AIChat) processEvent(ctx context.Context, event slackevents.EventsAPIEv
 				return
 			}
 			// 40% chance to drop the event where the bot is not mentioned
-			if random.Bool(0.6) {
+			if random.Bool(0.4) {
 				return
 			}
 			a.handleMessageEvent(ctx, eventMessage{
