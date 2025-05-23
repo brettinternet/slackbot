@@ -113,6 +113,12 @@ func (a *AIChat) processEvent(ctx context.Context, event slackevents.EventsAPIEv
 		innerEvent := event.InnerEvent
 		switch ev := innerEvent.Data.(type) {
 		case *slackevents.AppMentionEvent:
+			a.log.Debug("Processing AppMentionEvent",
+				zap.String("user", ev.User),
+				zap.String("channel", ev.Channel),
+				zap.String("text", ev.Text),
+				zap.String("type", a.ProcessorType()),
+			)
 			// Ignore bot messages to prevent loops
 			if ev.BotID != "" || ev.User == "" {
 				return
@@ -127,12 +133,24 @@ func (a *AIChat) processEvent(ctx context.Context, event slackevents.EventsAPIEv
 				Username: "",
 			})
 		case *slackevents.MessageEvent:
+			a.log.Debug("Processing MessageEvent",
+				zap.String("user", ev.User),
+				zap.String("channel", ev.Channel),
+				zap.String("text", ev.Text),
+				zap.String("type", a.ProcessorType()),
+			)
 			// TODO: Queue messages received during rate limit and pick one to respond to
 			// Ignore bot messages to prevent loops
 			if ev.BotID != "" || ev.User == "" {
 				return
 			}
 			if !a.eventlimiter.Allow() {
+				a.log.Debug("Rate limit exceeded, dropping event",
+					zap.String("user", ev.User),
+					zap.String("channel", ev.Channel),
+					zap.String("text", ev.Text),
+					zap.String("type", a.ProcessorType()),
+				)
 				return
 			}
 			// 40% chance to drop the event where the bot is not mentioned
@@ -147,25 +165,6 @@ func (a *AIChat) processEvent(ctx context.Context, event slackevents.EventsAPIEv
 			})
 		}
 	}
-}
-
-type UserDetails struct {
-	Username  string
-	FirstName string
-	LastName  string
-	TZ        string
-}
-
-// handleMessageEvent processes a eventMessage event and responds if it matches a pattern
-func (a *AIChat) userPersona(userID string) string {
-	a.mutex.Lock()
-	defer a.mutex.Unlock()
-	if personaName, ok := a.stickyPersonas[userID]; ok {
-		return personaName
-	}
-	personaName := randomPersonaName()
-	a.stickyPersonas[userID] = personaName
-	return personaName
 }
 
 type eventMessage struct {
@@ -249,6 +248,25 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 		)
 		return
 	}
+}
+
+// handleMessageEvent processes a eventMessage event and responds if it matches a pattern
+func (a *AIChat) userPersona(userID string) string {
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+	if personaName, ok := a.stickyPersonas[userID]; ok {
+		return personaName
+	}
+	personaName := randomPersonaName()
+	a.stickyPersonas[userID] = personaName
+	return personaName
+}
+
+type UserDetails struct {
+	Username  string
+	FirstName string
+	LastName  string
+	TZ        string
 }
 
 func chatPrompt(input string, u UserDetails, personaName string) (string, error) {

@@ -29,7 +29,7 @@ tasks:
         -X main.buildTime=$BUILD_DATE
         -X main.buildEnvironment=production
     cmds:
-      - go build -ldflags "{{.LDFLAGS}}" -o ./build/server ./main.go
+      - go build -ldflags "{{.LDFLAGS}}" -o ./build/bot ./main.go
 
   build:docker:
     desc: Build

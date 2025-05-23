@@ -18,8 +18,8 @@ RUN go build -ldflags "-s -w \
   -X main.buildTime=${BUILD_DATE} \
   -X main.buildEnvironment=${BUILD_ENVIRONMENT}" \
   -a \
-  -o ./main \
+  -o ./bot \
   cmd/bot/main.go
 
-CMD ["/app/main"]
+CMD ["/app/bot"]
 EXPOSE 4200

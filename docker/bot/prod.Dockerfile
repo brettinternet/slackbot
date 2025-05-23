@@ -18,7 +18,7 @@ RUN go build -ldflags "-s -w \
   -X main.buildTime=${BUILD_DATE} \
   -X main.buildEnvironment=${BUILD_ENVIRONMENT}" \
   -a \
-  -o ./main \
+  -o ./bot \
   cmd/bot/main.go
 
 # ---
@@ -28,7 +28,7 @@ FROM alpine:3.21
 # For fsnotify
 RUN apk add --no-cache inotify-tools
 
-COPY --from=builder /app/main /app/
+COPY --from=builder /app/bot /app/
 
 EXPOSE 4200
-CMD ["/app/main"]
+CMD ["/app/bot"]

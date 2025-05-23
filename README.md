@@ -14,7 +14,9 @@ Requires `SLACK_TOKEN` or `SLACK_TOKEN_FILE`.
 
 ## Features
 
-Include `FEATURES=obituary,chat`:
+See example [config.yaml](./cmd/bot/config.yaml) for feature configuration. Updates to this file will update the runtime configuration while it's running.
+
+Include `FEATURES=obituary,chat,vibecheck,aichat`:
 
 ### Obituary
 
@@ -31,3 +33,11 @@ Respond to user messages.
 Requires scopes: ``.
 
 Requires `SLACK_SIGNING_SECRET` and configuring a public event endpoint.
+
+### Vibecheck
+
+Check the vibe.
+
+### AI Chat
+
+Sticky personas assigned to users at random with some unhinged behaviors.
