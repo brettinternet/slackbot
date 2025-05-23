@@ -8,6 +8,7 @@ on: # yamllint disable-line rule:truthy
     paths:
       - bot/**
       - cmd/bot/**
+      - docker/bot/prod.Dockerfile
       - .github/workflows/publish-bot.yaml
 
 concurrency:
