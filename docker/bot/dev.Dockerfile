@@ -13,13 +13,14 @@ COPY . .
 ARG BUILD_ENVIRONMENT="production"
 ARG BUILD_VERSION="dev"
 ARG BUILD_DATE="unknown"
-RUN go build -ldflags "-s -w \
+RUN mkdir -p ./bin && \
+  go build -ldflags "-s -w \
   -X main.buildVersion=${BUILD_VERSION} \
   -X main.buildTime=${BUILD_DATE} \
   -X main.buildEnvironment=${BUILD_ENVIRONMENT}" \
   -a \
-  -o ./bot \
+  -o ./bin/bot \
   cmd/bot/main.go
 
-CMD ["/app/bot"]
+CMD ["/app/bin/bot"]
 EXPOSE 4200
