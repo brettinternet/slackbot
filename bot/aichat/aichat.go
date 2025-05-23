@@ -19,6 +19,10 @@ import (
 	"slackbot.arpa/tools/random"
 )
 
+const (
+	personaExpirationDuration = 30 * time.Minute // Personas expire after 30 minutes
+)
+
 const eventChannelSize = 10
 
 type aiService interface {
@@ -33,6 +37,11 @@ type FileConfig struct{}
 
 type Config struct{}
 
+type personaAssignment struct {
+	Name      string    // The name of the persona
+	Timestamp time.Time // When the persona was assigned
+}
+
 type AIChat struct {
 	log            *zap.Logger
 	config         Config
@@ -43,7 +52,7 @@ type AIChat struct {
 	isConnected    atomic.Bool
 	eventlimiter   *rate.Limiter
 	mentionLimiter *rate.Limiter
-	stickyPersonas map[string]string // userID -> personaName
+	stickyPersonas map[string]personaAssignment // userID -> personaAssignment
 	mutex          sync.Mutex
 }
 
@@ -55,7 +64,7 @@ func NewAIChat(log *zap.Logger, c Config, s slackService, a aiService) *AIChat {
 		ai:             a,
 		eventlimiter:   rate.NewLimiter(rate.Every(3*time.Minute), 5),
 		mentionLimiter: rate.NewLimiter(rate.Every(1*time.Minute), 3),
-		stickyPersonas: make(map[string]string),
+		stickyPersonas: make(map[string]personaAssignment),
 		stopCh:         make(chan struct{}),
 		eventsCh:       make(chan slackevents.EventsAPIEvent, eventChannelSize),
 	}
@@ -174,6 +183,7 @@ type eventMessage struct {
 	Text     string
 }
 
+// handleMessageEvent processes a message event and generates a response
 func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 	eventMessage := strings.TrimSpace(m.Text)
 
@@ -250,15 +260,23 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 	}
 }
 
-// handleMessageEvent processes a eventMessage event and responds if it matches a pattern
+// userPersona assigns a persona to a user and returns the persona name.
 func (a *AIChat) userPersona(userID string) string {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
-	if personaName, ok := a.stickyPersonas[userID]; ok {
-		return personaName
+
+	if assignment, ok := a.stickyPersonas[userID]; ok {
+		if time.Since(assignment.Timestamp) < personaExpirationDuration {
+			return assignment.Name
+		}
+		delete(a.stickyPersonas, userID)
 	}
+
 	personaName := randomPersonaName()
-	a.stickyPersonas[userID] = personaName
+	a.stickyPersonas[userID] = personaAssignment{
+		Name:      personaName,
+		Timestamp: time.Now(),
+	}
 	return personaName
 }
 
