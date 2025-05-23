@@ -18,7 +18,7 @@ env:
   REPO: brettinternet/slackbot
   IMAGE_NAME: slackbot
   DESCRIPTION: A Slack bot
-  DOCKERFILE: ./docker/bot/Dockerfile
+  DOCKERFILE: ./docker/bot/prod.Dockerfile
 
 defaults:
   run:

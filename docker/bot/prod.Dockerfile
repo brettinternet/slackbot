@@ -3,6 +3,8 @@ FROM golang:${BUILDER_IMAGE_VERSION} as builder
 
 WORKDIR /app
 
+RUN apk add --no-cache gcc musl-dev
+
 COPY go.mod go.sum ./
 RUN go mod download
 
@@ -12,22 +14,21 @@ ARG BUILD_ENVIRONMENT="production"
 ARG BUILD_VERSION="dev"
 ARG BUILD_DATE="unknown"
 RUN go build -ldflags "-s -w \
-    -X main.buildVersion=${BUILD_VERSION} \
-    -X main.buildTime=${BUILD_DATE} \
-    -X main.buildEnvironment=${BUILD_ENVIRONMENT}" \
-    -a \
-    -o ./main \
-    cmd/bot/main.go
+  -X main.buildVersion=${BUILD_VERSION} \
+  -X main.buildTime=${BUILD_DATE} \
+  -X main.buildEnvironment=${BUILD_ENVIRONMENT}" \
+  -a \
+  -o ./main \
+  cmd/bot/main.go
 
 # ---
 
-ARG RUNTIME_IMAGE_VERSION=3.21
-FROM alpine:${RUNTIME_IMAGE_VERSION}
+FROM alpine:3.21
 
 # For fsnotify
 RUN apk add --no-cache inotify-tools
 
 COPY --from=builder /app/main /app/
 
-EXPOSE 8080
+EXPOSE 4200
 CMD ["/app/main"]

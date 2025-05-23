@@ -17,7 +17,7 @@ services:
     container_name: slackbot
     build:
       context: ./
-      dockerfile: ./docker/bot/Dockerfile
+      dockerfile: ./docker/bot/dev.Dockerfile
     environment:
       <<: *environment
       SERVER_HOST: 0.0.0.0

@@ -33,5 +33,7 @@ tasks:
 
   build:docker:
     desc: Build
+    requires:
+      vars: [env]
     cmds:
-      - docker build -t slackbot:latest -f ../../docker/bot/Dockerfile ../../
+      - docker build -t slackbot:latest -f ../../docker/bot/{{.env}}.Dockerfile ../../
