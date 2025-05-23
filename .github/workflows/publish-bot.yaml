@@ -66,10 +66,6 @@ jobs:
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
-        env:
-          BUILD_VERSION: ${{ steps.meta.outputs.sha }}
-          BUILD_DATE: ${{ github.event.repository.updated_at }}
-          BUILD_ENVIRONMENT: production
         with:
           context: .
           file: ${{ env.DOCKERFILE}}
@@ -77,3 +73,7 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            BUILD_VERSION=${{ steps.meta.outputs.sha }}
+            BUILD_DATE=${{ github.event.repository.updated_at }}
+            BUILD_ENVIRONMENT=production
