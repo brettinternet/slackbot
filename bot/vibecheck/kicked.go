@@ -96,10 +96,6 @@ func (m *kickedUsersManager) GetUsersToReinvite() []kickedUser {
 	var usersToReinvite []kickedUser
 	now := time.Now()
 
-	m.log.Debug("Checking for users to reinvite",
-		zap.Int("total_kicked_users", len(m.users)),
-	)
-
 	for key, user := range m.users {
 		if !user.Reinvited && now.After(user.ReinviteAt) {
 			m.log.Debug("Found user ready for reinvite",

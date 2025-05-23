@@ -242,8 +242,6 @@ func (o *Obituary) checkForDeletedUsers(ctx context.Context) error {
 
 	if len(deletedUsers) > 0 {
 		o.log.Info("Detected deleted users.", zap.Int("count", len(deletedUsers)))
-	} else {
-		o.log.Debug("No deleted users detected.", zap.Int("total", len(newUserMap)))
 	}
 
 	if hasChanges {
@@ -251,8 +249,6 @@ func (o *Obituary) checkForDeletedUsers(ctx context.Context) error {
 		if err := o.saveUsersToDisk(); err != nil {
 			o.log.Warn("Failed to save users to disk.", zap.Error(err))
 		}
-	} else {
-		o.log.Debug("No changes in user list, skipping save to disk.")
 	}
 
 	return nil
