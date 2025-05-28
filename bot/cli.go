@@ -45,20 +45,10 @@ func NewCommandRoot(s *Bot) (*bool, *cli.Command) {
 			*start = true
 			return nil
 		},
-		Commands:               Commands(s),
-		Flags:                  config.Flags(),
-		MutuallyExclusiveFlags: config.MutuallyExclusiveFlags(),
+		Commands: Commands(s),
+		Flags:    config.Flags(),
 	}
 }
-
-// func Run(ctx context.Context, s *Bot) {
-// 	svcErr := make(chan error, 1)
-// 	go func() {
-// 		err := s.Run(ctx)
-// 		svcErr <- err
-// 	}()
-// 	return
-// }
 
 func Commands(s *Bot) []*cli.Command {
 	return []*cli.Command{

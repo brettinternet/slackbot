@@ -1,7 +1,6 @@
 package config
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -23,7 +22,7 @@ func Flags() []cli.Flag {
 			Usage:   "log level",
 			Value:   "info",
 			Sources: cli.EnvVars("LOG_LEVEL"),
-			Action: func(ctx context.Context, cmd *cli.Command, v string) error {
+			Validator: func(v string) error {
 				options := []string{"error", "warn", "info", "debug"}
 				if slices.Contains(options, strings.ToLower(v)) {
 					return nil
@@ -35,7 +34,7 @@ func Flags() []cli.Flag {
 			Name:    "env",
 			Usage:   "build environment description",
 			Sources: cli.EnvVars("ENVIRONMENT"),
-			Action: func(ctx context.Context, cmd *cli.Command, v string) error {
+			Validator: func(v string) error {
 				if v == "" {
 					return nil
 				}
@@ -50,7 +49,7 @@ func Flags() []cli.Flag {
 			Usage:   "Data storage directory, may be relative or absolute",
 			Value:   "./",
 			Sources: cli.EnvVars("DATA_DIR"),
-			Action: func(ctx context.Context, cmd *cli.Command, v string) error {
+			Validator: func(v string) error {
 				if err := validateDirectoryInput(v, 0755); err != nil {
 					return cli.Exit(fmt.Errorf("invalid data directory: %v", err), 2)
 				}
@@ -60,7 +59,7 @@ func Flags() []cli.Flag {
 		&cli.StringSliceFlag{
 			Name:    "features",
 			Sources: cli.EnvVars("FEATURES"),
-			Action: func(ctx context.Context, cmd *cli.Command, values []string) error {
+			Validator: func(values []string) error {
 				for _, v := range values {
 					if !IsFeature(v) {
 						return cli.Exit(fmt.Errorf("invalid feature option: %s", v), 2)
@@ -87,7 +86,7 @@ func Flags() []cli.Flag {
 			Usage:   "Path to yaml or json file of chat responses definition.",
 			Value:   "./config.yaml",
 			Sources: cli.EnvVars("CONFIG_FILE"),
-			Action: func(ctx context.Context, cmd *cli.Command, v string) error {
+			Validator: func(v string) error {
 				if v == "" {
 					return nil
 				}
@@ -131,85 +130,30 @@ func Flags() []cli.Flag {
 				yaml.YAML("slack_events_path", altsrc.NewStringPtrSourcer(&configFile)),
 			),
 		},
-	}
-}
-
-func MutuallyExclusiveFlags() []cli.MutuallyExclusiveFlags {
-	return []cli.MutuallyExclusiveFlags{
-		{
+		&cli.StringFlag{
+			Name:     "slack-token",
+			Usage:    "Slack Client Secret for OAuth authentication.",
 			Required: true,
-			Flags: [][]cli.Flag{
-				{
-					&cli.StringFlag{
-						Name:    "slack-token",
-						Usage:   "Slack Client Secret for OAuth authentication.",
-						Sources: cli.EnvVars("SLACK_TOKEN"),
-					},
-				},
-				{
-					&cli.StringFlag{
-						Name:    "slack-token-file",
-						Usage:   "Path to Slack Client Secret for OAuth authentication.",
-						Sources: cli.EnvVars("SLACK_TOKEN_FILE"),
-						Action: func(ctx context.Context, cmd *cli.Command, v string) error {
-							if err := validateFileInput(v); err != nil {
-								return cli.Exit(fmt.Errorf("invalid slack token file: %v", err), 2)
-							}
-							return nil
-						},
-					},
-				},
-			},
+			Sources: cli.NewValueSourceChain(
+				cli.EnvVar("SLACK_TOKEN"),
+				cli.File("/run/secrets/slack_token"),
+			),
 		},
-		{
-			Required: false,
-			Flags: [][]cli.Flag{
-				{
-					&cli.StringFlag{
-						Name:    "slack-signing-secret",
-						Usage:   "Slack Signing Secret for verifying events.",
-						Sources: cli.EnvVars("SLACK_SIGNING_SECRET"),
-					},
-				},
-				{
-					&cli.StringFlag{
-						Name:    "slack-signing-secret-file",
-						Usage:   "Path to Slack Signing Secret file for verifying events.",
-						Sources: cli.EnvVars("SLACK_SIGNING_SECRET_FILE"),
-						Action: func(ctx context.Context, cmd *cli.Command, v string) error {
-							if err := validateFileInput(v); err != nil {
-								return cli.Exit(fmt.Errorf("invalid slack signing secret file: %v", err), 2)
-							}
-							return nil
-						},
-					},
-				},
-			},
+		&cli.StringFlag{
+			Name:  "slack-signing-secret",
+			Usage: "Slack Signing Secret for verifying events.",
+			Sources: cli.NewValueSourceChain(
+				cli.EnvVar("SLACK_SIGNING_SECRET"),
+				cli.File("/run/secrets/slack_signing_secret"),
+			),
 		},
-		{
-			Required: true,
-			Flags: [][]cli.Flag{
-				{
-					&cli.StringFlag{
-						Name:    "openai-api-key",
-						Usage:   "OpenAPI API key for AI conversations.",
-						Sources: cli.EnvVars("OPENAI_API_KEY"),
-					},
-				},
-				{
-					&cli.StringFlag{
-						Name:    "openai-api-key-file",
-						Usage:   "Path to OpenAPI API key file.",
-						Sources: cli.EnvVars("OPENAI_API_KEY_FILE"),
-						Action: func(ctx context.Context, cmd *cli.Command, v string) error {
-							if err := validateFileInput(v); err != nil {
-								return cli.Exit(fmt.Errorf("invalid key file: %v", err), 2)
-							}
-							return nil
-						},
-					},
-				},
-			},
+		&cli.StringFlag{
+			Name:  "openai-api-key",
+			Usage: "OpenAPI API key for AI conversations.",
+			Sources: cli.NewValueSourceChain(
+				cli.EnvVar("OPENAI_API_KEY"),
+				cli.File("/run/secrets/openai_api_key"),
+			),
 		},
 	}
 }

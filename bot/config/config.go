@@ -89,50 +89,44 @@ func (l BuildOpts) MakeConfig(cmd *cli.Command) (Config, error) {
 		environment = EnvironmentProduction.String()
 	}
 	opts := configOpts{
-		Version:                l.BuildVersion,
-		BuildTime:              l.BuildTime,
-		LogLevel:               cmd.String("log-level"),
-		Environment:            environment,
-		DataDir:                cmd.String("data-dir"),
-		Features:               cmd.StringSlice("features"),
-		ServerHost:             cmd.String("server-host"),
-		ServerPort:             cmd.Uint32("server-port"),
-		SlackToken:             cmd.String("slack-token"),
-		SlackTokenFile:         cmd.String("slack-token-file"),
-		SlackSigningSecret:     cmd.String("slack-signing-secret"),
-		SlackSigningSecretFile: cmd.String("slack-signing-secret-file"),
-		OpenAIAPIKey:           cmd.String("openai-api-key"),
-		OpenAIAPIKeyFile:       cmd.String("openai-api-key-file"),
-		PreferredUsers:         cmd.StringSlice("slack-preferred-users"),
-		PreferredChannels:      cmd.StringSlice("slack-preferred-channels"),
-		ObituaryNotifyChannel:  cmd.String("slack-obituary-notify-channel"),
-		SlackEventsPath:        cmd.String("slack-events-path"),
-		ConfigFile:             cmd.String("config-file"),
+		Version:               l.BuildVersion,
+		BuildTime:             l.BuildTime,
+		LogLevel:              cmd.String("log-level"),
+		Environment:           environment,
+		DataDir:               cmd.String("data-dir"),
+		Features:              cmd.StringSlice("features"),
+		ServerHost:            cmd.String("server-host"),
+		ServerPort:            cmd.Uint32("server-port"),
+		SlackToken:            cmd.String("slack-token"),
+		SlackSigningSecret:    cmd.String("slack-signing-secret"),
+		OpenAIAPIKey:          cmd.String("openai-api-key"),
+		PreferredUsers:        cmd.StringSlice("slack-preferred-users"),
+		PreferredChannels:     cmd.StringSlice("slack-preferred-channels"),
+		ObituaryNotifyChannel: cmd.String("slack-obituary-notify-channel"),
+		SlackEventsPath:       cmd.String("slack-events-path"),
+		ConfigFile:            cmd.String("config-file"),
 	}
 
 	return newConfig(opts)
 }
 
 type configOpts struct {
-	Version                string
-	BuildTime              string
-	LogLevel               string
-	Environment            string
-	DataDir                string
-	Features               []string
-	ServerHost             string
-	ServerPort             uint32
-	SlackToken             string
-	SlackTokenFile         string
-	SlackSigningSecret     string
-	SlackSigningSecretFile string
-	OpenAIAPIKey           string
-	OpenAIAPIKeyFile       string
-	PreferredUsers         []string
-	PreferredChannels      []string
-	ObituaryNotifyChannel  string
-	SlackEventsPath        string
-	ConfigFile             string
+	Version               string
+	BuildTime             string
+	LogLevel              string
+	Environment           string
+	DataDir               string
+	Features              []string
+	ServerHost            string
+	ServerPort            uint32
+	SlackToken            string
+	SlackSigningSecret    string
+	OpenAIAPIKey          string
+	PreferredUsers        []string
+	PreferredChannels     []string
+	ObituaryNotifyChannel string
+	SlackEventsPath       string
+	ConfigFile            string
 }
 
 type Config struct {
@@ -167,30 +161,6 @@ func newConfig(opts configOpts) (Config, error) {
 		dataDir, _ = relativeToAbsolutePath(dataDir)
 	}
 
-	slackToken := opts.SlackToken
-	if opts.SlackTokenFile != "" {
-		tokenBytes, err := os.ReadFile(opts.SlackTokenFile)
-		if err == nil {
-			slackToken = string(tokenBytes)
-		}
-	}
-
-	slackSigningSecret := opts.SlackSigningSecret
-	if opts.SlackSigningSecretFile != "" {
-		secretBytes, err := os.ReadFile(opts.SlackSigningSecretFile)
-		if err == nil {
-			slackSigningSecret = string(secretBytes)
-		}
-	}
-
-	openAIAPIKey := opts.OpenAIAPIKey
-	if opts.OpenAIAPIKeyFile != "" {
-		secretBytes, err := os.ReadFile(opts.OpenAIAPIKeyFile)
-		if err == nil {
-			openAIAPIKey = string(secretBytes)
-		}
-	}
-
 	return Config{
 		Version:     opts.Version,
 		BuildTime:   opts.BuildTime,
@@ -205,8 +175,8 @@ func newConfig(opts configOpts) (Config, error) {
 			SlackEventPath: opts.SlackEventsPath,
 		},
 		Slack: slack.Config{
-			Token:             slackToken,
-			SigningSecret:     slackSigningSecret,
+			Token:             opts.SlackToken,
+			SigningSecret:     opts.SlackSigningSecret,
 			Debug:             false,
 			PreferredChannels: opts.PreferredChannels,
 		},
@@ -222,7 +192,7 @@ func newConfig(opts configOpts) (Config, error) {
 			DataDir:        dataDir,
 		},
 		AI: ai.Config{
-			OpenAIAPIKey: openAIAPIKey,
+			OpenAIAPIKey: opts.OpenAIAPIKey,
 		},
 		AIChat: aichat.Config{},
 	}, nil
