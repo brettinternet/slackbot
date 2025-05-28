@@ -221,12 +221,14 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 		)
 		return
 	}
+	maxTemp := 1.0
 	maxLength := 300
-	if random.Bool(0.05) {
+	if random.Bool(0.3) {
+		maxTemp = 2.0
 		maxLength = 1000
 	}
 	completion, err := a.ai.LLM().Call(ctx, content,
-		llms.WithTemperature(random.Float(0.3, 1.0)),
+		llms.WithTemperature(random.Float(0.3, maxTemp)),
 		llms.WithMaxTokens(1024),
 		llms.WithMaxLength(random.Int(3, maxLength)),
 		llms.WithTopP(0.9),
