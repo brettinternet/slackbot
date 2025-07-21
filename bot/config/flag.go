@@ -68,12 +68,6 @@ func Flags() []cli.Flag {
 				return nil
 			},
 		},
-		&cli.StringFlag{
-			Name:    "server-host",
-			Usage:   "Server host",
-			Value:   "localhost",
-			Sources: cli.EnvVars("SERVER_HOST"),
-		},
 		&cli.Uint32Flag{
 			Name:    "server-port",
 			Usage:   "Server port",

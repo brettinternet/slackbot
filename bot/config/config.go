@@ -95,7 +95,6 @@ func (l BuildOpts) MakeConfig(cmd *cli.Command) (Config, error) {
 		Environment:           environment,
 		DataDir:               cmd.String("data-dir"),
 		Features:              cmd.StringSlice("features"),
-		ServerHost:            cmd.String("server-host"),
 		ServerPort:            cmd.Uint32("server-port"),
 		SlackToken:            cmd.String("slack-token"),
 		SlackSigningSecret:    cmd.String("slack-signing-secret"),
@@ -117,7 +116,6 @@ type configOpts struct {
 	Environment           string
 	DataDir               string
 	Features              []string
-	ServerHost            string
 	ServerPort            uint32
 	SlackToken            string
 	SlackSigningSecret    string
@@ -170,7 +168,6 @@ func newConfig(opts configOpts) (Config, error) {
 		Features:    features,
 		ConfigFile:  opts.ConfigFile,
 		Server: http.Config{
-			ServerHost:     opts.ServerHost,
 			ServerPort:     opts.ServerPort,
 			SlackEventPath: opts.SlackEventsPath,
 		},

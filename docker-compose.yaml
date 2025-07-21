@@ -20,7 +20,6 @@ services:
       dockerfile: ./docker/bot/dev.Dockerfile
     environment:
       <<: *environment
-      SERVER_HOST: 0.0.0.0
       SERVER_PORT: 4200
       FEATURES: obituary
       ENVIRONMENT: development

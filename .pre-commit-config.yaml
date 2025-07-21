@@ -25,13 +25,7 @@ repos:
     rev: 0.6.8
     hooks:
       - id: fix-smartquotes
-  - repo: https://github.com/gruntwork-io/pre-commit
-    rev: v0.1.29
-    hooks:
-      - id: terraform-fmt
-      - id: terraform-validate
-      - id: tflint
   - repo: https://github.com/zricethezav/gitleaks
-    rev: v8.26.0
+    rev: v8.27.2
     hooks:
       - id: gitleaks

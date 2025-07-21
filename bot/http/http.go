@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"net/url"
 	"sync/atomic"
 	"time"
 
@@ -20,7 +19,6 @@ type slackService interface {
 }
 
 type Config struct {
-	ServerHost     string
 	ServerPort     uint32
 	SlackEventPath string // Path for the Slack events API endpoint
 }
@@ -49,16 +47,11 @@ func NewServer(log *zap.Logger, config Config, slack slackService) *Server {
 }
 
 func (h *Server) Run(ctx context.Context) error {
-	host := h.config.ServerHost
-	su, err := url.ParseRequestURI(h.config.ServerHost)
-	if err == nil {
-		host = su.Hostname()
-	}
 	port := h.config.ServerPort
 	if port == 0 {
 		port = DefaultServerPort
 	}
-	addr := fmt.Sprintf("%s:%d", host, port)
+	addr := fmt.Sprintf(":%d", port)
 	h.server = &http.Server{
 		Addr:    addr,
 		Handler: h.serveMux,

@@ -10,7 +10,7 @@ includes:
     taskfile: .taskfiles/bot.yaml
   lint: .taskfiles/lint.yaml
   precommit: .taskfiles/precommit.yaml
-  setup: .taskfiles/setup_{{OS}}.yaml
+  setup: .taskfiles/setup.yaml
 
 tasks:
   default:
