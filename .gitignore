@@ -8,7 +8,12 @@ node_modules
 /docker/data
 
 # Local taskfile
-Taskfile.y*ml
+/Taskfile.yml
+/Taskfile.yaml
+
+mise.local.toml
+
+CLAUDE.local.md
 
 # Go
 go.work.sum
