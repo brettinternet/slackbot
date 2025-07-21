@@ -45,6 +45,11 @@ tasks:
     deps:
       - task: bot:start
 
+  test:
+    desc: Run all tests
+    cmds:
+      - go test ./...
+
   count:
     desc: Count lines of code
     cmd: cloc --vcs=git .
