@@ -313,10 +313,10 @@ func TestCurrentExecutableDirectory(t *testing.T) {
 
 func TestDefault(t *testing.T) {
 	tests := []struct {
-		name        string
-		val         interface{}
-		defaultVal  interface{}
-		expected    interface{}
+		name       string
+		val        interface{}
+		defaultVal interface{}
+		expected   interface{}
 	}{
 		{"string zero value", "", "default", "default"},
 		{"string non-zero value", "value", "default", "value"},

@@ -9,6 +9,7 @@ tasks:
     cmds:
       - task: yaml
       - task: go
+
   yaml:
     desc: Run yamllint
     cmds: ['yamllint -c {{.CONFIG_DIR}}/.yamllint.yaml .']
@@ -16,9 +17,30 @@ tasks:
       - sh: command -v yamllint
         msg: |
           Install 'yamllint' with 'pip install -r requirements.txt' or via your package manager (e.g. homebrew).
+
   go:
     desc: Run golint
-    cmds: [golint ./...]
+    cmds:
+      # - golint ./...
+      - golangci-lint run
     preconditions:
       - sh: command -v golint
         msg: Missing golint
+
+  fix:
+    desc: Fix files
+    cmds:
+      - task: yamlfix
+      - golangci-lint run --fix
+      - golangci-lint fmt
+
+  yamlfix:
+    desc: Fix YAML files
+    env:
+      YAMLFIX_WHITELINES: '1'
+      YAMLFIX_SEQUENCE_STYLE: keep_style
+    cmd: yamlfix .
+    preconditions:
+      - sh: command -v yamlfix
+        msg: |-
+          Install 'yamlfix' with 'go install github.com/segmentio/yamlfix/cmd/yamlfix@latest' or via your package manager.

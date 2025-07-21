@@ -108,7 +108,7 @@ func TestConfig(t *testing.T) {
 		config Config
 	}{
 		{
-			name: "empty config",
+			name:   "empty config",
 			config: Config{},
 		},
 		{

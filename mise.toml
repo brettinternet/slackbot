@@ -1,5 +1,6 @@
 [tools]
 go = "latest"
+golangci-lint = "latest"
 pre-commit = "latest"
 task = "latest"
 uv = "latest"
