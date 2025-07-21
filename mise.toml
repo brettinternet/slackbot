@@ -5,6 +5,7 @@ task = "latest"
 uv = "latest"
 
 yamllint = "latest"
+"pipx:yamlfix" = "latest"
 prettier = "latest"
 
 [settings]

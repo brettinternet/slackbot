@@ -1,6 +1,5 @@
 ---
 extends: default
-
 rules:
   line-length:
     max: 200
@@ -11,15 +10,13 @@ rules:
   braces:
     max-spaces-inside: 1
   truthy:
-    allowed-values: ["true", "false"]
+    allowed-values: ['true', 'false']
     check-keys: false
   quoted-strings:
     quote-type: any
     required: only-when-needed
-    extra-allowed:
-      - \$.*
-
-ignore: |
+    extra-allowed: [\$.*]
+ignore: |-
   node_modules/
   deps/
   _build/

@@ -18,8 +18,9 @@ CLAUDE.local.md
 # Go
 go.work.sum
 
-# Test binary
+# Tests
 *.test
+coverage.out
 
 # Logs
 *.log
@@ -40,6 +41,7 @@ tmp
 build/
 /cmd/*/data
 /docker/*/data
+/slackbot
 
 # Binaries
 *.exe

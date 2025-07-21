@@ -1,34 +1,25 @@
 ---
 # yaml-language-server: $schema=https://taskfile.dev/schema.json
-version: "3"
-
+version: '3'
 vars:
   GOPATH:
     sh: go env GOPATH
-  GO_BIN: "{{.GOPATH}}/bin"
-
+  GO_BIN: '{{.GOPATH}}/bin'
 tasks:
   init:
     desc: Install system dependencies
     cmds:
       - task: mise
       - task: gobin
-
   mise:
     desc: Install workstation dependencies
-    cmds:
-      - mise trust --silent -a
-      - mise install
+    cmds: [mise trust --silent -a, mise install]
     preconditions:
       - sh: command -v mise
         msg: Mise is not installed
-
   gobin:
     desc: Install Go binaries
-    generates:
-      - "{{.GO_BIN}}/air"
+    generates: ['{{.GO_BIN}}/air']
     cmds:
-      - for:
-          - github.com/air-verse/air@latest
-          - golang.org/x/lint/golint@latest
+      - for: [github.com/air-verse/air@latest, golang.org/x/lint/golint@latest]
         cmd: go install {{ .ITEM }}

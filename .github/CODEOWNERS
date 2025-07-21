@@ -1,0 +1,25 @@
+# Global owners
+* @brett
+
+# GitHub workflows and CI/CD
+/.github/ @brett
+
+# Go source code
+*.go @brett
+go.mod @brett
+go.sum @brett
+
+# Docker files
+/docker/ @brett
+Dockerfile @brett
+
+# Configuration files
+*.yaml @brett
+*.yml @brett
+*.toml @brett
+
+# Documentation
+*.md @brett
+
+# Test files
+*_test.go @brett

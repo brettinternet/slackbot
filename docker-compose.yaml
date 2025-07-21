@@ -3,14 +3,12 @@ x-options: &options
   tty: true
   networks: [default]
   environment: &environment
-    TZ: "${TIMEZONE:-America/Denver}"
-  deploy: &deploy
+    TZ: ${TIMEZONE:-America/Denver}
+  deploy:
     restart_policy:
       condition: unless-stopped
   env_file: [.env]
-
 name: slackbot
-
 services:
   slackbot:
     <<: *options
@@ -24,24 +22,21 @@ services:
       FEATURES: obituary
       ENVIRONMENT: development
       DATA_DIR: /app/data
-    volumes:
-      - ./docker/bot/data:/app/data
-    ports:
-      - 4200:4200
+    volumes: [./docker/bot/data:/app/data]
+    ports: [4200:4200]
     labels:
       traefik.enable: true
       traefik.http.routers.client.rule: Host(`bot.${DOMAIN}`)
       traefik.http.routers.client.service: client-service
       traefik.http.routers.client.entrypoints: web
       traefik.http.services.client-service.loadbalancer.server.port: 4200
-
   traefik:
     <<: *options
     image: traefik:v3.3
     container_name: traefik
     environment:
       <<: *environment
-      CF_DNS_API_TOKEN: "${CLOUDFLARE_API_TOKEN:?err}"
+      CF_DNS_API_TOKEN: ${CLOUDFLARE_API_TOKEN:?err}
       CLOUDFLARE_POLLING_INTERVAL: 10
       CLOUDFLARE_PROPAGATION_TIMEOUT: 300
     command:
@@ -63,51 +58,45 @@ services:
       - --entrypoints.websecure.http.tls.domains[0].main=${DOMAIN}
       - --entrypoints.websecure.http.tls.domains[0].sans=*.${DOMAIN}
       - --certificatesresolvers.leresolver.acme.dnschallenge=true
-      - --certificatesresolvers.leresolver.acme.dnschallenge.disablepropagationcheck=true # for internal domain
+      - --certificatesresolvers.leresolver.acme.dnschallenge.disablepropagationcheck=true  # for internal domain
       - --certificatesresolvers.leresolver.acme.dnschallenge.provider=cloudflare
       - --certificatesresolvers.leresolver.acme.dnschallenge.resolvers=1.1.1.1:53
       - --certificatesresolvers.leresolver.acme.storage=/etc/traefik/acme.json
       - --certificatesresolvers.leresolver.acme.email=${ACME_EMAIL}
       - --serverstransport.insecureskipverify=true
-    ports:
-      - 80:80
-      - 443:443
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports: [80:80, 443:443]
+    volumes: [/var/run/docker.sock:/var/run/docker.sock:ro]
     labels:
       traefik.enable: true
       traefik.http.routers.traefik.rule: Host(`traefik.${DOMAIN}`)
       traefik.http.routers.traefik.service: api@internal
       traefik.http.routers.traefik.entrypoints: websecure
       traefik.tls.option.default.alpnProtocols: http/1.1,h2,dot
-
   cloudflared-tunnel:
     <<: *options
     image: cloudflare/cloudflared:2025.5.0
     container_name: cloudflared-tunnel
     environment:
       <<: *environment
-      NO_AUTOUPDATE: "true"
-      NO_TLS_VERIFY: "true"
-      TUNNEL_TOKEN: "${CLOUDFLARE_TUNNEL_TOKEN:?err}"
+      NO_AUTOUPDATE: 'true'
+      NO_TLS_VERIFY: 'true'
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?err}
       TUNNEL_URL: https://traefik
-      TUNNEL_ID: "${CLOUDFLARE_TUNNEL_ID}"
+      TUNNEL_ID: ${CLOUDFLARE_TUNNEL_ID}
     command: [tunnel, run]
-
   cloudflare-companion:
     <<: *options
     image: tiredofit/traefik-cloudflare-companion:latest
     container_name: cloudflare-companion
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+    volumes: [/var/run/docker.sock:/var/run/docker.sock:ro]
     environment:
       <<: *environment
-      TIMEZONE: "${TIMEZONE}"
+      TIMEZONE: ${TIMEZONE}
       TRAEFIK_VERSION: 2
-      CF_TOKEN: "${CLOUDFLARE_API_TOKEN:?err}"
-      TARGET_DOMAIN: "tunnel.${DOMAIN}"
-      DOMAIN1: "${DOMAIN}"
-      DOMAIN1_ZONE_ID: "${CLOUDFLARE_PUBLIC_DOMAIN_ZONE_ID}"
-      DOMAIN1_PROXIED: "true"
-      DOMAIN1_EXCLUDED_SUB_DOMAINS: "*.internal.${DOMAIN}"
-      ENABLE_ZABBIX: "false"
+      CF_TOKEN: ${CLOUDFLARE_API_TOKEN:?err}
+      TARGET_DOMAIN: tunnel.${DOMAIN}
+      DOMAIN1: ${DOMAIN}
+      DOMAIN1_ZONE_ID: ${CLOUDFLARE_PUBLIC_DOMAIN_ZONE_ID}
+      DOMAIN1_PROXIED: 'true'
+      DOMAIN1_EXCLUDED_SUB_DOMAINS: '*.internal.${DOMAIN}'
+      ENABLE_ZABBIX: 'false'
