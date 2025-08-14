@@ -122,9 +122,11 @@ func TestConfig(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Test that config struct can be created and accessed
-			if tt.config.OpenAIAPIKey != tt.config.OpenAIAPIKey {
-				t.Error("Config field access should work")
+			if tt.config.OpenAIAPIKey == "" && tt.name != "empty config" {
+				t.Error("Expected non-empty API key for this test case")
 			}
+			// Just verify the config is accessible
+			_ = tt.config.OpenAIAPIKey
 		})
 	}
 }
@@ -144,11 +146,11 @@ func TestAI_FullLifecycle(t *testing.T) {
 	}
 
 	// Attempt to start (will likely fail with invalid key, but that's expected)
-	err := ai.Start(ctx)
+	_ = ai.Start(ctx)
 	// We don't assert on the error because it's expected to fail with invalid API key
 
 	// Test that Stop() works regardless of Start() success
-	err = ai.Stop(ctx)
+	err := ai.Stop(ctx)
 	if err != nil {
 		t.Errorf("Stop() error = %v, want nil", err)
 	}
@@ -223,6 +225,6 @@ func BenchmarkAI_Start(b *testing.B) {
 		ai := NewAI(logger, config)
 		// Note: This will error in benchmarks due to invalid API key,
 		// but we're measuring the performance of the method call
-		ai.Start(ctx)
+		_ = ai.Start(ctx)
 	}
 }

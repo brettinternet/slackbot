@@ -47,7 +47,7 @@ func newKickedUsersManager(log *zap.Logger, dataDir string) *kickedUsersManager 
 	}
 
 	// Ensure data directory exists
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
+	if err := os.MkdirAll(dataDir, 0750); err != nil {
 		log.Error("Failed to create data directory", zap.Error(err), zap.String("path", dataDir))
 	} else {
 		log.Debug("Ensured data directory exists", zap.String("path", dataDir))
@@ -151,7 +151,7 @@ func (m *kickedUsersManager) saveToDisk() {
 		return
 	}
 
-	err = os.WriteFile(m.filePath, data, 0644)
+	err = os.WriteFile(m.filePath, data, 0600)
 	if err != nil {
 		m.log.Error("Failed to save kicked users data", zap.Error(err), zap.String("path", m.filePath))
 	} else {

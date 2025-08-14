@@ -105,10 +105,7 @@ func TestBuildOpts_MakeConfig(t *testing.T) {
 	}
 
 	// Parse the command
-	err := cmd.Run(context.Background(), []string{"test"})
-	if err != nil {
-		// Command parsing might fail, but we just need flags set
-	}
+	_ = cmd.Run(context.Background(), []string{"test"})
 
 	config, err := buildOpts.MakeConfig(cmd)
 	if err != nil {
@@ -163,7 +160,7 @@ func TestBuildOpts_MakeConfig_Defaults(t *testing.T) {
 		},
 	}
 
-	cmd.Run(context.Background(), []string{"test"})
+	_ = cmd.Run(context.Background(), []string{"test"})
 
 	config, err := buildOpts.MakeConfig(cmd)
 	if err != nil {

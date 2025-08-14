@@ -61,7 +61,7 @@ services:
       - --entrypoints.websecure.http.tls.domains[0].main=${DOMAIN}
       - --entrypoints.websecure.http.tls.domains[0].sans=*.${DOMAIN}
       - --certificatesresolvers.leresolver.acme.dnschallenge=true
-      - --certificatesresolvers.leresolver.acme.dnschallenge.disablepropagationcheck=true  # for internal domain
+      - --certificatesresolvers.leresolver.acme.dnschallenge.disablepropagationcheck=true # for internal domain
       - --certificatesresolvers.leresolver.acme.dnschallenge.provider=cloudflare
       - --certificatesresolvers.leresolver.acme.dnschallenge.resolvers=1.1.1.1:53
       - --certificatesresolvers.leresolver.acme.storage=/etc/traefik/acme.json
@@ -85,8 +85,8 @@ services:
     container_name: cloudflared-tunnel
     environment:
       <<: *environment
-      NO_AUTOUPDATE: 'true'
-      NO_TLS_VERIFY: 'true'
+      NO_AUTOUPDATE: "true"
+      NO_TLS_VERIFY: "true"
       TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?err}
       TUNNEL_URL: https://traefik
       TUNNEL_ID: ${CLOUDFLARE_TUNNEL_ID}
@@ -105,6 +105,6 @@ services:
       TARGET_DOMAIN: tunnel.${DOMAIN}
       DOMAIN1: ${DOMAIN}
       DOMAIN1_ZONE_ID: ${CLOUDFLARE_PUBLIC_DOMAIN_ZONE_ID}
-      DOMAIN1_PROXIED: 'true'
-      DOMAIN1_EXCLUDED_SUB_DOMAINS: '*.internal.${DOMAIN}'
-      ENABLE_ZABBIX: 'false'
+      DOMAIN1_PROXIED: "true"
+      DOMAIN1_EXCLUDED_SUB_DOMAINS: "*.internal.${DOMAIN}"
+      ENABLE_ZABBIX: "false"

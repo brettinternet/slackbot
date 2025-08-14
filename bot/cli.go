@@ -3,14 +3,11 @@ package bot
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 
 	"github.com/urfave/cli/v3"
 	"slackbot.arpa/bot/config"
 )
 
-var currentProcessName string = filepath.Base(os.Args[0])
 
 type cmdWithArgs func(ctx context.Context, cmd *cli.Command, s *Bot) error
 

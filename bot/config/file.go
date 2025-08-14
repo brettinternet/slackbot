@@ -105,7 +105,7 @@ func (w *ConfigWatcher) Stop() {
 	if w.pollingTicker != nil {
 		w.pollingTicker.Stop()
 	}
-	w.watcher.Close()
+	_ = w.watcher.Close()
 }
 
 // AddCallback registers a function to be called when the config file changes
@@ -218,7 +218,7 @@ func (w *ConfigWatcher) notifyCallbacks() {
 func readConfig(filePath string, v any) error {
 	ext := filepath.Ext(filePath)
 
-	content, err := os.ReadFile(filePath)
+	content, err := os.ReadFile(filePath) // #nosec G304 -- filePath is controlled by configuration
 	if err != nil {
 		return fmt.Errorf("read config file: %w", err)
 	}

@@ -74,7 +74,7 @@ func (h *Server) handleSlackEvents(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain")
-		w.Write([]byte(challenge.Challenge))
+		_, _ = w.Write([]byte(challenge.Challenge))
 		h.log.Info("Responded to URL verification challenge")
 		return
 	}
@@ -94,6 +94,6 @@ func readRequestBody(r *http.Request) ([]byte, error) {
 	if r.Body == nil {
 		return nil, fmt.Errorf("request body is nil")
 	}
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 	return io.ReadAll(r.Body)
 }

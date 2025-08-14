@@ -53,8 +53,12 @@ func (h *Server) Run(ctx context.Context) error {
 	}
 	addr := fmt.Sprintf(":%d", port)
 	h.server = &http.Server{
-		Addr:    addr,
-		Handler: h.serveMux,
+		Addr:               addr,
+		Handler:            h.serveMux,
+		ReadHeaderTimeout:  time.Second * 10,
+		ReadTimeout:        time.Second * 30,
+		WriteTimeout:       time.Second * 30,
+		IdleTimeout:        time.Second * 120,
 		BaseContext: func(_ net.Listener) context.Context {
 			return ctx
 		},
@@ -97,14 +101,14 @@ func (h *Server) health(w http.ResponseWriter, r *http.Request) {
 
 	if h.isShuttingDown.Load() { // allow draining by degrading readiness probe
 		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(map[string]string{
+		_ = json.NewEncoder(w).Encode(map[string]string{
 			"status": "shutting down",
 			"time":   time.Now().Format(time.RFC3339),
 		})
 		return
 	}
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{
+	_ = json.NewEncoder(w).Encode(map[string]string{
 		"status": "ok",
 		"time":   time.Now().Format(time.RFC3339),
 	})
@@ -124,7 +128,7 @@ func (h *Server) ready(w http.ResponseWriter, r *http.Request) {
 
 	if !h.isReady.Load() {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(map[string]string{
+		_ = json.NewEncoder(w).Encode(map[string]string{
 			"status": "not ready",
 			"time":   time.Now().Format(time.RFC3339),
 		})
@@ -132,7 +136,7 @@ func (h *Server) ready(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{
+	_ = json.NewEncoder(w).Encode(map[string]string{
 		"status": "ready",
 		"time":   time.Now().Format(time.RFC3339),
 	})

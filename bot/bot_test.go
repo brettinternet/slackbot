@@ -60,6 +60,7 @@ func TestBot_Setup_MinimalConfig(t *testing.T) {
 	if err != nil {
 		// We expect this to fail since we're not actually running the command
 		// We just need the flags to be parsed
+		t.Logf("Expected command run error: %v", err)
 	}
 
 	_, err = bot.Setup(ctx, cmd)
@@ -157,7 +158,7 @@ func TestBot_Shutdown_EmptyBot(t *testing.T) {
 		}
 	}()
 
-	bot.Shutdown(ctx)
+	_ = bot.Shutdown(ctx)
 }
 
 // Helper function to create a minimal command for testing
@@ -185,7 +186,7 @@ func createMinimalCommand() *cli.Command {
 	}
 
 	// Initialize the command with test args
-	app.Run(context.Background(), []string{"test-app"})
+	_ = app.Run(context.Background(), []string{"test-app"})
 	return app
 }
 
@@ -215,6 +216,6 @@ func BenchmarkBot_Setup(b *testing.B) {
 	b.ResetTimer()
 	for b.Loop() {
 		bot := NewBot(buildOpts)
-		bot.Setup(ctx, cmd)
+		_, _ = bot.Setup(ctx, cmd)
 	}
 }

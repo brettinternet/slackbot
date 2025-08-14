@@ -13,11 +13,7 @@ import (
 
 // mockSlackService implements slackService interface for testing
 type mockSlackService struct {
-	users      []slack.User
-	userID     string
-	username   string
-	orgURL     string
-	shouldFail bool
+	orgURL string
 }
 
 func (m *mockSlackService) Client() *slack.Client {
@@ -62,7 +58,7 @@ func TestNewUserWatch(t *testing.T) {
 	}
 
 	// Clean up test directory
-	os.RemoveAll(config.DataDir)
+	_ = os.RemoveAll(config.DataDir)
 }
 
 func TestNewUserWatch_EmptyDataDir(t *testing.T) {
@@ -146,7 +142,7 @@ func TestUserWatch_SaveAndLoadUsers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	logger := zap.NewNop()
 	config := Config{
@@ -240,7 +236,7 @@ func TestUserWatch_LoadUsersFromDisk_InvalidJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	// Write invalid JSON to users file
 	usersFile := filepath.Join(tempDir, "users.json")

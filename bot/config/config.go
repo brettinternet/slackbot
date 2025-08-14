@@ -172,7 +172,7 @@ func relativeToAbsolutePath(input string) (string, error) {
 	if err != nil {
 		return input, err
 	}
-	filepath.Abs(input)
+	_, _ = filepath.Abs(input)
 	return path.Clean(path.Join(cwd, input)), nil
 }
 

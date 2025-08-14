@@ -52,6 +52,7 @@ func TestNewZapLogger(t *testing.T) {
 				if tt.opts.Level == "none" && logger != zap.NewNop() {
 					// Note: This comparison might not work as expected due to zap internals
 					// but we check that no error occurred and logger is not nil
+					t.Logf("Logger created for 'none' level: %T", logger)
 				}
 			}
 
@@ -180,7 +181,7 @@ func TestLoggerOutput(t *testing.T) {
 
 	defer func() {
 		os.Stdout = oldStdout
-		w.Close()
+		_ = w.Close()
 	}()
 
 	opts := LoggerOpts{Level: "info", IsProduction: false, JSONConsole: false}
@@ -193,9 +194,9 @@ func TestLoggerOutput(t *testing.T) {
 	logger.Get().Info("test message")
 
 	// Close writer and read output
-	w.Close()
+	_ = w.Close()
 	var buf bytes.Buffer
-	io.Copy(&buf, r)
+	_, _ = io.Copy(&buf, r)
 
 	output := buf.String()
 	if !strings.Contains(output, "test message") {
@@ -211,7 +212,7 @@ func TestLoggerJSONOutput(t *testing.T) {
 
 	defer func() {
 		os.Stdout = oldStdout
-		w.Close()
+		_ = w.Close()
 	}()
 
 	opts := LoggerOpts{Level: "info", IsProduction: false, JSONConsole: true}
@@ -224,9 +225,9 @@ func TestLoggerJSONOutput(t *testing.T) {
 	logger.Get().Info("test json message")
 
 	// Close writer and read output
-	w.Close()
+	_ = w.Close()
 	var buf bytes.Buffer
-	io.Copy(&buf, r)
+	_, _ = io.Copy(&buf, r)
 
 	output := buf.String()
 	if !strings.Contains(output, "test json message") {
@@ -247,7 +248,7 @@ func TestLoggerLevels(t *testing.T) {
 
 	defer func() {
 		os.Stdout = oldStdout
-		w.Close()
+		_ = w.Close()
 	}()
 
 	opts := LoggerOpts{Level: "warn", IsProduction: false, JSONConsole: false}
@@ -267,9 +268,9 @@ func TestLoggerLevels(t *testing.T) {
 	zapLogger.Error("error message")
 
 	// Close writer and read output
-	w.Close()
+	_ = w.Close()
 	var buf bytes.Buffer
-	io.Copy(&buf, r)
+	_, _ = io.Copy(&buf, r)
 
 	output := buf.String()
 

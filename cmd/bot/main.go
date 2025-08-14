@@ -61,8 +61,8 @@ func run(rootCtx context.Context, args []string) error {
 	select {
 	case <-rootCtx.Done():
 		stop()
-		b.BeginShutdown(runCtx)
-		sleepContext(runCtx, terminationDrainPeriod) // Give time for readiness check to propagate
+		_ = b.BeginShutdown(runCtx)
+		_ = sleepContext(runCtx, terminationDrainPeriod) // Give time for readiness check to propagate
 
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), terminationGracePeriod)
 		defer shutdownCancel()
@@ -71,7 +71,7 @@ func run(rootCtx context.Context, args []string) error {
 		runCancel()
 		if err != nil {
 			log.Error("Error during bot shutdown.", zap.Error(err))
-			sleepContext(shutdownCtx, terminationHardPeriod) // Give time for shutdown to complete
+			_ = sleepContext(shutdownCtx, terminationHardPeriod) // Give time for shutdown to complete
 		}
 
 		if err := b.ForceShutdown(shutdownCtx); err != nil {

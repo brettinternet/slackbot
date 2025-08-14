@@ -36,7 +36,6 @@ type Config struct {
 }
 
 type UserWatch struct {
-	config        Config
 	log           *zap.Logger
 	slack         slackService
 	notifyChannel string
@@ -50,7 +49,7 @@ type UserWatch struct {
 func NewUserWatch(log *zap.Logger, c Config, s slackService) *UserWatch {
 	if c.DataDir != "" {
 		if _, err := os.Stat(c.DataDir); os.IsNotExist(err) {
-			if err := os.MkdirAll(c.DataDir, 0755); err != nil {
+			if err := os.MkdirAll(c.DataDir, 0750); err != nil {
 				log.Error("Failed to create data directory", zap.String("dir", c.DataDir), zap.Error(err))
 			}
 		}
@@ -502,7 +501,7 @@ func (o *UserWatch) saveUsersToDisk() error {
 		return fmt.Errorf("marshal users: %w", err)
 	}
 
-	if err := os.WriteFile(tempFile, data, 0644); err != nil {
+	if err := os.WriteFile(tempFile, data, 0600); err != nil {
 		return fmt.Errorf("write temp file: %w", err)
 	}
 

@@ -93,14 +93,14 @@ func (s *Bot) Run(runCtx context.Context) error {
 		if s.chat != nil {
 			s.configWatcher.AddCallback("chat", func(c config.FileConfig) {
 				s.log.Info("Updating chat configuration")
-				s.chat.SetConfig(c.Chat)
+				_ = s.chat.SetConfig(c.Chat)
 			})
 		}
 
 		if s.vibecheck != nil {
 			s.configWatcher.AddCallback("vibecheck", func(c config.FileConfig) {
 				s.log.Info("Updating vibecheck configuration")
-				s.vibecheck.SetConfig(c.Vibecheck)
+				_ = s.vibecheck.SetConfig(c.Vibecheck)
 			})
 		}
 

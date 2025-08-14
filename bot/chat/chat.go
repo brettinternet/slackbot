@@ -258,6 +258,7 @@ func (c *Chat) SetConfig(cfg FileConfig) error {
 }
 
 func randomString(values []string) string {
+	// #nosec G404 -- Using math/rand is acceptable for non-cryptographic randomness (chat responses)
 	rand.New(rand.NewSource(time.Now().UnixNano()))
-	return values[rand.Intn(len(values))]
+	return values[rand.Intn(len(values))] // #nosec G404
 }
