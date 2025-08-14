@@ -1,21 +1,57 @@
 ---
 # yaml-language-server: $schema=https://taskfile.dev/schema.json
-version: '3'
+version: "3"
+
+vars:
+  MAIN_DIR: cmd/bot
+
 env:
-  FEATURES: obituary,chat,vibecheck,aichat
+  SERVER_PORT: 4200
   LOG_LEVEL: debug
   BUILD_VERSION: dev
   BUILD_DATE:
     sh: date -u '+%Y-%m-%dT%H:%M:%SZ'
+
 tasks:
   start:
-    desc: Start server in development
+    desc: Start
+    dir: "{{.MAIN_DIR}}"
     cmd: air
+
+  kill:
+    desc: Kill server
+    cmd: lsof -t -i tcp:${SERVER_PORT} | xargs kill
+
   run:
-    desc: Run command
-    env:
-      FEATURES: ''
-    cmd: go run -tags=dev ./main.go {{.COMMAND | default .CLI_ARGS}}
+    desc: Runs server commands with arguments
+    dir: "{{.MAIN_DIR}}"
+    cmd: go run ./main.go {{.COMMAND | default .CLI_ARGS}}
+
+  check:
+    desc: Run checks
+    cmds:
+      - go vet ./...
+      - golangci-lint run --timeout 5m
+      - gosec ./...
+      - errcheck ./...
+      - go mod verify
+
+  fix:
+    desc: Fix checks
+    cmds:
+      - go mod tidy
+      - golangci-lint run --fix --timeout 5m
+      - errcheck -ignoretests ./...
+
+  test:
+    desc: Run tests
+    cmd: go test -v ./...
+
+  clean:
+    desc: Clean build artifacts
+    cmds:
+      - rm {{.MAIN_DIR}}/tmp/main
+
   build:
     desc: Build
     vars:
@@ -25,6 +61,7 @@ tasks:
         -X main.buildTime=$BUILD_DATE
         -X main.buildEnvironment=production
     cmds: ['go build -ldflags "{{.LDFLAGS}}" -o ./build/bot ./main.go']
+
   build:docker:
     desc: Build
     requires:

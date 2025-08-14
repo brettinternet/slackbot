@@ -5,32 +5,11 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"testing"
 
 	"github.com/urfave/cli/v3"
 )
 
-func TestFeature_String(t *testing.T) {
-	tests := []struct {
-		feature  Feature
-		expected string
-	}{
-		{FeatureObituary, "obituary"},
-		{FeatureChat, "chat"},
-		{FeatureVibecheck, "vibecheck"},
-		{FeatureAIChat, "aichat"},
-	}
-
-	for _, tt := range tests {
-		t.Run(string(tt.feature), func(t *testing.T) {
-			result := tt.feature.String()
-			if result != tt.expected {
-				t.Errorf("Feature.String() = %v, want %v", result, tt.expected)
-			}
-		})
-	}
-}
 
 func TestEnvironment_String(t *testing.T) {
 	tests := []struct {
@@ -97,55 +76,7 @@ func TestEnvironmentFromString(t *testing.T) {
 	}
 }
 
-func TestIsFeature(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected bool
-	}{
-		{"obituary", true},
-		{"chat", true},
-		{"vibecheck", true},
-		{"aichat", true},
-		{"invalid", false},
-		{"", false},
-		{"Chat", false}, // Case sensitive
-	}
 
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			result := IsFeature(tt.input)
-			if result != tt.expected {
-				t.Errorf("IsFeature(%v) = %v, want %v", tt.input, result, tt.expected)
-			}
-		})
-	}
-}
-
-func TestHasFeature(t *testing.T) {
-	features := []Feature{FeatureChat, FeatureVibecheck}
-
-	tests := []struct {
-		name     string
-		features []Feature
-		feature  Feature
-		expected bool
-	}{
-		{"has chat", features, FeatureChat, true},
-		{"has vibecheck", features, FeatureVibecheck, true},
-		{"does not have obituary", features, FeatureObituary, false},
-		{"does not have aichat", features, FeatureAIChat, false},
-		{"empty features", []Feature{}, FeatureChat, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := HasFeature(tt.features, tt.feature)
-			if result != tt.expected {
-				t.Errorf("HasFeature(%v, %v) = %v, want %v", tt.features, tt.feature, result, tt.expected)
-			}
-		})
-	}
-}
 
 func TestBuildOpts_MakeConfig(t *testing.T) {
 	buildOpts := BuildOpts{
@@ -161,14 +92,13 @@ func TestBuildOpts_MakeConfig(t *testing.T) {
 			&cli.StringFlag{Name: "env", Value: "production"},
 			&cli.StringFlag{Name: "log-level", Value: "debug"},
 			&cli.StringFlag{Name: "data-dir", Value: "/custom/data"},
-			&cli.StringSliceFlag{Name: "features", Value: []string{"chat", "vibecheck", "invalid"}},
-			&cli.UintFlag{Name: "server-port", Value: 9000},
+			&cli.Uint32Flag{Name: "server-port", Value: 9000},
 			&cli.StringFlag{Name: "slack-token", Value: "test-slack-token"},
 			&cli.StringFlag{Name: "slack-signing-secret", Value: "test-signing-secret"},
 			&cli.StringFlag{Name: "openai-api-key", Value: "test-openai-key"},
-			&cli.StringSliceFlag{Name: "slack-preferred-users", Value: []string{"user1", "user2"}},
+			&cli.StringSliceFlag{Name: "slack-preferred-user", Value: []string{"user1", "user2"}},
 			&cli.StringSliceFlag{Name: "slack-preferred-channels", Value: []string{"channel1"}},
-			&cli.StringFlag{Name: "slack-obituary-notify-channel", Value: "obituary-channel"},
+			&cli.StringFlag{Name: "slack-user-notify-channel", Value: "user-notify-channel"},
 			&cli.StringFlag{Name: "slack-events-path", Value: "/custom/events"},
 			&cli.StringFlag{Name: "config-file", Value: "config.yaml"},
 		},
@@ -199,12 +129,6 @@ func TestBuildOpts_MakeConfig(t *testing.T) {
 		t.Errorf("Config.Environment = %v, want %v", config.Environment, EnvironmentProduction)
 	}
 
-	// Test features filtering (should only include valid features)
-	expectedFeatures := []Feature{FeatureChat, FeatureVibecheck}
-	if !slices.Equal(config.Features, expectedFeatures) {
-		t.Errorf("Config.Features = %v, want %v", config.Features, expectedFeatures)
-	}
-
 	// Test server config - Note: CLI parsing in tests doesn't work the same as real CLI
 	// The flags don't get properly parsed in unit tests, so we skip this assertion
 	// if config.Server.ServerPort != 9000 {
@@ -227,14 +151,13 @@ func TestBuildOpts_MakeConfig_Defaults(t *testing.T) {
 			&cli.StringFlag{Name: "env", Value: ""},
 			&cli.StringFlag{Name: "log-level", Value: "info"},
 			&cli.StringFlag{Name: "data-dir", Value: ""},
-			&cli.StringSliceFlag{Name: "features"},
-			&cli.UintFlag{Name: "server-port", Value: 8080},
+			&cli.Uint32Flag{Name: "server-port", Value: 8080},
 			&cli.StringFlag{Name: "slack-token", Value: "token"},
 			&cli.StringFlag{Name: "slack-signing-secret", Value: "secret"},
 			&cli.StringFlag{Name: "openai-api-key", Value: ""},
-			&cli.StringSliceFlag{Name: "slack-preferred-users"},
+			&cli.StringSliceFlag{Name: "slack-preferred-user"},
 			&cli.StringSliceFlag{Name: "slack-preferred-channels"},
-			&cli.StringFlag{Name: "slack-obituary-notify-channel", Value: ""},
+			&cli.StringFlag{Name: "slack-user-notify-channel", Value: ""},
 			&cli.StringFlag{Name: "slack-events-path", Value: "/slack/events"},
 			&cli.StringFlag{Name: "config-file", Value: ""},
 		},
@@ -351,32 +274,25 @@ func TestDefault(t *testing.T) {
 
 func TestNewConfig(t *testing.T) {
 	opts := configOpts{
-		Version:               "1.0.0",
-		BuildTime:             "2023-01-01",
-		LogLevel:              "debug",
-		Environment:           "development",
-		DataDir:               "/custom/data",
-		Features:              []string{"chat", "vibecheck", "invalid"},
-		ServerPort:            9000,
-		SlackToken:            "test-token",
-		SlackSigningSecret:    "test-secret",
-		OpenAIAPIKey:          "test-key",
-		PreferredUsers:        []string{"user1", "user2"},
-		PreferredChannels:     []string{"channel1"},
-		ObituaryNotifyChannel: "obituary",
-		SlackEventsPath:       "/events",
-		ConfigFile:            "config.yaml",
+		Version:            "1.0.0",
+		BuildTime:          "2023-01-01",
+		LogLevel:           "debug",
+		Environment:        "development",
+		DataDir:            "/custom/data",
+		ServerPort:         9000,
+		SlackToken:         "test-token",
+		SlackSigningSecret: "test-secret",
+		OpenAIAPIKey:       "test-key",
+		PreferredUsers:     []string{"user1", "user2"},
+		PreferredChannels:  []string{"channel1"},
+		UserNotifyChannel:  "user-notify",
+		SlackEventsPath:    "/events",
+		ConfigFile:         "config.yaml",
 	}
 
 	config, err := newConfig(opts)
 	if err != nil {
 		t.Fatalf("newConfig() error = %v", err)
-	}
-
-	// Test that only valid features are included
-	expectedFeatures := []Feature{FeatureChat, FeatureVibecheck}
-	if !reflect.DeepEqual(config.Features, expectedFeatures) {
-		t.Errorf("newConfig() Features = %v, want %v", config.Features, expectedFeatures)
 	}
 
 	// Test basic config fields
@@ -420,8 +336,8 @@ func TestNewConfig_EmptyDataDir(t *testing.T) {
 	}
 
 	// Check that nested configs also get the default data dir
-	if config.Obituary.DataDir != "./tmp" {
-		t.Errorf("newConfig() Obituary.DataDir = %v, want %v", config.Obituary.DataDir, "./tmp")
+	if config.User.DataDir != "./tmp" {
+		t.Errorf("newConfig() User.DataDir = %v, want %v", config.User.DataDir, "./tmp")
 	}
 
 	if config.Vibecheck.DataDir != "./tmp" {
@@ -429,24 +345,6 @@ func TestNewConfig_EmptyDataDir(t *testing.T) {
 	}
 }
 
-func BenchmarkIsFeature(b *testing.B) {
-	features := []string{"chat", "vibecheck", "obituary", "aichat", "invalid"}
-
-	for b.Loop() {
-		for _, feature := range features {
-			IsFeature(feature)
-		}
-	}
-}
-
-func BenchmarkHasFeature(b *testing.B) {
-	features := []Feature{FeatureChat, FeatureVibecheck, FeatureObituary}
-
-	for b.Loop() {
-		HasFeature(features, FeatureChat)
-		HasFeature(features, FeatureAIChat)
-	}
-}
 
 func BenchmarkEnvironmentFromString(b *testing.B) {
 	envs := []string{"development", "production", "invalid"}

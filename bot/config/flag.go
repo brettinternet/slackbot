@@ -56,18 +56,6 @@ func Flags() []cli.Flag {
 				return nil
 			},
 		},
-		&cli.StringSliceFlag{
-			Name:    "features",
-			Sources: cli.EnvVars("FEATURES"),
-			Validator: func(values []string) error {
-				for _, v := range values {
-					if !IsFeature(v) {
-						return cli.Exit(fmt.Errorf("invalid feature option: %s", v), 2)
-					}
-				}
-				return nil
-			},
-		},
 		&cli.Uint32Flag{
 			Name:    "server-port",
 			Usage:   "Server port",
@@ -108,11 +96,12 @@ func Flags() []cli.Flag {
 			),
 		},
 		&cli.StringFlag{
-			Name:  "slack-obituary-notify-channel",
-			Usage: "Channel name to notify when a user is deleted from the Slack organization.",
+			Name:  "slack-user-notify-channel",
+			Usage: "Channel name to notify when a user is added or removed from the Slack organization.",
 			Sources: cli.NewValueSourceChain(
 				cli.EnvVar("SLACK_OBITUARY_NOTIFY_CHANNEL"),
-				yaml.YAML("obituary.notify_channel", altsrc.NewStringPtrSourcer(&configFile)),
+				cli.EnvVar("SLACK_USER_NOTIFY_CHANNEL"),
+				yaml.YAML("user.notify_channel", altsrc.NewStringPtrSourcer(&configFile)),
 			),
 		},
 		&cli.StringFlag{

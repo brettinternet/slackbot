@@ -1,49 +1,51 @@
 ---
-# yaml-language-server: $schema=https://taskfile.dev/schema.json
-version: '3'
+# yaml-language-bot: $schema=https://taskfile.dev/schema.json
+version: "3"
 
 dotenv: [.env]
 
 includes:
-  bot:
-    dir: cmd/bot
-    taskfile: .taskfiles/bot.yaml
-  lint: .taskfiles/lint.yaml
-  precommit: .taskfiles/precommit.yaml
   setup: .taskfiles/setup.yaml
+  bot: .taskfiles/bot.yaml
 
 tasks:
   default:
     silent: true
-    cmds: [task -l]
+    cmd: task -l
 
   init:
     desc: Install dependencies and setup environment
     aliases: [setup]
-    cmds:
+    deps:
       - task: setup:init
-      - task: precommit:init
-      - task: precommit:update
-      - task: create-env-file
-
-  create-env-file:
-    desc: Create local environment variable file
-    cmds: [cp example.env .env]
-    status: [test -f .env]
-
-  update:
-    desc: Update all dependencies
-    cmds: [go get -u ./..., go mod tidy]
+    cmds:
+      - task: bot:init
 
   start:
-    desc: Start all services
+    desc: Start the server
     deps:
       - task: bot:start
 
+  check:
+    desc: Run all checks
+    deps:
+      - task: bot:check
+    cmds:
+      - dprint check
+
+  fix:
+    desc: Run all fixes
+    deps:
+      - task: bot:fix
+    cmds:
+      - dprint fmt
+
   test:
     desc: Run all tests
-    cmds: [go test ./...]
+    deps:
+      - task: bot:test
 
-  count:
-    desc: Count lines of code
-    cmd: cloc --vcs=git .
+  clean:
+    desc: Clean
+    deps:
+      - task: bot:clean

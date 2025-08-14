@@ -13,8 +13,8 @@ import (
 	"slackbot.arpa/bot/chat"
 	"slackbot.arpa/bot/config"
 	"slackbot.arpa/bot/http"
-	"slackbot.arpa/bot/obituary"
 	"slackbot.arpa/bot/slack"
+	"slackbot.arpa/bot/user"
 	"slackbot.arpa/bot/vibecheck"
 	"slackbot.arpa/logger"
 )
@@ -26,7 +26,7 @@ type Bot struct {
 	config        config.Config
 	http          *http.Server
 	slack         *slack.Slack
-	obituary      *obituary.Obituary
+	userWatch     *user.UserWatch
 	chat          *chat.Chat
 	vibecheck     *vibecheck.Vibecheck
 	configWatcher *config.ConfigWatcher
@@ -69,40 +69,22 @@ func (s *Bot) Setup(ctx context.Context, cmd *cli.Command) (context.Context, err
 
 	s.slack = slack.NewSlack(s.log, s.config.Slack)
 
-	if s.config.Features != nil {
-		s.log.Debug("Running bot with features.", zap.Any("features", s.config.Features))
-	} else {
-		s.log.Warn("No features enabled.")
-	}
-
 	if err := s.slack.Setup(ctx); err != nil {
-		return ctx, fmt.Errorf("start slack: %w", err)
+		return ctx, fmt.Errorf("setup slack service: %w", err)
 	}
 
-	if config.HasFeature(s.config.Features, config.FeatureObituary) {
-		s.obituary = obituary.NewObituary(s.log, s.config.Obituary, s.slack)
-	}
-
-	if config.HasFeature(s.config.Features, config.FeatureChat) {
-		s.chat = chat.NewChat(s.log, s.config.Chat, s.slack)
-	}
-
-	if config.HasFeature(s.config.Features, config.FeatureVibecheck) {
-		s.vibecheck = vibecheck.NewVibecheck(s.log, s.config.Vibecheck, s.slack)
-	}
-
-	if config.HasFeature(s.config.Features, config.FeatureAIChat) {
-		s.ai = ai.NewAI(s.log, s.config.AI)
-		s.aichat = aichat.NewAIChat(s.log, s.config.AIChat, s.slack, s.ai)
-	}
-
+	s.userWatch = user.NewUserWatch(s.log, s.config.User, s.slack)
+	s.chat = chat.NewChat(s.log, s.config.Chat, s.slack)
+	s.vibecheck = vibecheck.NewVibecheck(s.log, s.config.Vibecheck, s.slack)
+	s.ai = ai.NewAI(s.log, s.config.AI)
+	s.aichat = aichat.NewAIChat(s.log, s.config.AIChat, s.slack, s.ai)
 	s.http = http.NewServer(s.log, s.config.Server, s.slack)
 	return ctx, nil
 }
 
 func (s *Bot) Run(runCtx context.Context) error {
 	if err := s.slack.Start(runCtx); err != nil {
-		return fmt.Errorf("start slack: %w", err)
+		return fmt.Errorf("start slack service: %w", err)
 	}
 
 	// Start the config configWatcher if we have one
@@ -142,9 +124,9 @@ func (s *Bot) Run(runCtx context.Context) error {
 		}
 	}
 
-	if s.obituary != nil {
-		if err := s.obituary.Start(runCtx); err != nil {
-			return fmt.Errorf("start obituary: %w", err)
+	if s.userWatch != nil {
+		if err := s.userWatch.Start(runCtx); err != nil {
+			return fmt.Errorf("start user watch: %w", err)
 		}
 	}
 
@@ -187,8 +169,8 @@ func (s *Bot) Shutdown(ctx context.Context) error {
 			return fmt.Errorf("stop aichat: %w", err)
 		}
 	}
-	if s.obituary != nil {
-		if err := s.obituary.Stop(ctx); err != nil {
+	if s.userWatch != nil {
+		if err := s.userWatch.Stop(ctx); err != nil {
 			errs = errors.Join(errs, fmt.Errorf("stop obituary: %w", err))
 		}
 	}

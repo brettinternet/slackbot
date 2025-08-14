@@ -1,17 +1,16 @@
-package obituary
+package user
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
-
-	"maps"
 
 	"github.com/slack-go/slack"
 	"go.uber.org/zap"
@@ -24,11 +23,6 @@ type slackService interface {
 	OrgURL() string
 }
 
-type Config struct {
-	NotifyChannel string
-	DataDir       string
-}
-
 // User represents a simplified Slack user for persistence
 type User struct {
 	ID       string `json:"id"`
@@ -36,7 +30,13 @@ type User struct {
 	RealName string `json:"real_name"`
 }
 
-type Obituary struct {
+type Config struct {
+	NotifyChannel string
+	DataDir       string
+}
+
+type UserWatch struct {
+	config        Config
 	log           *zap.Logger
 	slack         slackService
 	notifyChannel string
@@ -47,7 +47,7 @@ type Obituary struct {
 	usersFile     string
 }
 
-func NewObituary(log *zap.Logger, c Config, s slackService) *Obituary {
+func NewUserWatch(log *zap.Logger, c Config, s slackService) *UserWatch {
 	if c.DataDir != "" {
 		if _, err := os.Stat(c.DataDir); os.IsNotExist(err) {
 			if err := os.MkdirAll(c.DataDir, 0755); err != nil {
@@ -58,10 +58,10 @@ func NewObituary(log *zap.Logger, c Config, s slackService) *Obituary {
 
 	usersFile := ""
 	if c.DataDir != "" {
-		usersFile = filepath.Join(c.DataDir, "obituary_users.json")
+		usersFile = filepath.Join(c.DataDir, "users.json")
 	}
 
-	return &Obituary{
+	return &UserWatch{
 		log:           log,
 		notifyChannel: c.NotifyChannel,
 		knownUsers:    make(map[string]*slack.User),
@@ -70,7 +70,7 @@ func NewObituary(log *zap.Logger, c Config, s slackService) *Obituary {
 	}
 }
 
-func (o *Obituary) Start(ctx context.Context) error {
+func (o *UserWatch) Start(ctx context.Context) error {
 	if o.notifyChannel == "" {
 		return fmt.Errorf("notification channel is not set")
 	}
@@ -95,24 +95,43 @@ func (o *Obituary) Start(ctx context.Context) error {
 	}
 
 	if len(previousUsers) > 0 {
-		o.log.Debug("Checking for users deleted while service was down",
+		o.log.Debug("Checking for user changes while service was down",
 			zap.Int("previous_count", len(previousUsers)),
 			zap.Int("current_count", len(o.knownUsers)))
 
 		var deletedUsers []slack.User
+		var addedUsers []slack.User
+		
+		// Check for deleted users
 		for id, user := range previousUsers {
 			if _, exists := o.knownUsers[id]; !exists {
 				deletedUsers = append(deletedUsers, *user)
+			}
+		}
+		
+		// Check for added users
+		for id, user := range o.knownUsers {
+			if _, exists := previousUsers[id]; !exists {
+				addedUsers = append(addedUsers, *user)
 			}
 		}
 
 		for _, user := range deletedUsers {
 			o.notifyUserDeleted(ctx, &user)
 		}
+		
+		for _, user := range addedUsers {
+			o.notifyUserAdded(ctx, &user)
+		}
 
 		if len(deletedUsers) > 0 {
 			o.log.Info("Detected users deleted while service was down",
 				zap.Int("count", len(deletedUsers)))
+		}
+		
+		if len(addedUsers) > 0 {
+			o.log.Info("Detected users added while service was down",
+				zap.Int("count", len(addedUsers)))
 		}
 	}
 
@@ -122,15 +141,15 @@ func (o *Obituary) Start(ctx context.Context) error {
 
 	o.sendStartupMessage(ctx)
 
-	o.log.Debug("Obituary service started, monitoring for deleted users")
+	o.log.Debug("UserWatch service started, monitoring for user additions and deletions")
 
 	go func() {
 		defer o.ticker.Stop()
 		for {
 			select {
 			case <-o.ticker.C:
-				if err := o.checkForDeletedUsers(ctx); err != nil {
-					o.log.Error("Error checking for deleted users", zap.Error(err))
+				if err := o.checkForUserChanges(ctx); err != nil {
+					o.log.Error("Error checking for user changes", zap.Error(err))
 				}
 			case <-ctx.Done():
 				return
@@ -141,7 +160,7 @@ func (o *Obituary) Start(ctx context.Context) error {
 	return nil
 }
 
-func (o *Obituary) Stop(ctx context.Context) error {
+func (o *UserWatch) Stop(ctx context.Context) error {
 	if err := o.saveUsersToDisk(); err != nil {
 		o.log.Warn("Failed to save users before stopping", zap.Error(err))
 	}
@@ -156,7 +175,7 @@ func (o *Obituary) Stop(ctx context.Context) error {
 }
 
 // fetchAllUsers gets all users from the Slack workspace and stores them in a map
-func (o *Obituary) fetchAllUsers(ctx context.Context) error {
+func (o *UserWatch) fetchAllUsers(ctx context.Context) error {
 	o.mutex.Lock()
 	defer o.mutex.Unlock()
 
@@ -186,9 +205,9 @@ func isValidUser(user slack.User) bool {
 	return user.ID != "" && !user.Deleted && !user.IsBot
 }
 
-// checkForDeletedUsers compares the current user list with our stored list
-func (o *Obituary) checkForDeletedUsers(ctx context.Context) error {
-	o.log.Debug("Checking for deleted users")
+// checkForUserChanges compares the current user list with our stored list for additions and deletions
+func (o *UserWatch) checkForUserChanges(ctx context.Context) error {
+	o.log.Debug("Checking for user changes")
 
 	o.mutex.Lock()
 	currentUsers := make(map[string]*slack.User)
@@ -208,6 +227,7 @@ func (o *Obituary) checkForDeletedUsers(ctx context.Context) error {
 		newUserMap[user.ID] = user
 	}
 
+	// Find deleted users
 	var deletedUsers []slack.User
 	for id, user := range currentUsers {
 		if _, exists := newUserMap[id]; !exists {
@@ -215,19 +235,28 @@ func (o *Obituary) checkForDeletedUsers(ctx context.Context) error {
 		}
 	}
 
-	// Check for new or modified users
-	hasChanges := len(deletedUsers) > 0
+	// Find added users
+	var addedUsers []slack.User
+	for id, user := range newUserMap {
+		if _, exists := currentUsers[id]; !exists {
+			addedUsers = append(addedUsers, user)
+		}
+	}
+
+	// Check for modified users
+	hasChanges := len(deletedUsers) > 0 || len(addedUsers) > 0
 	if !hasChanges {
 		for id, newUser := range newUserMap {
-			if oldUser, exists := currentUsers[id]; !exists ||
-				oldUser.Name != newUser.Name ||
-				oldUser.RealName != newUser.RealName {
+			if oldUser, exists := currentUsers[id]; exists &&
+				(oldUser.Name != newUser.Name ||
+					oldUser.RealName != newUser.RealName) {
 				hasChanges = true
 				break
 			}
 		}
 	}
 
+	// Update our known users map
 	o.mutex.Lock()
 	o.knownUsers = make(map[string]*slack.User)
 	for id, user := range newUserMap {
@@ -236,12 +265,22 @@ func (o *Obituary) checkForDeletedUsers(ctx context.Context) error {
 	}
 	o.mutex.Unlock()
 
+	// Send notifications for deleted users
 	for _, user := range deletedUsers {
 		o.notifyUserDeleted(ctx, &user)
 	}
 
+	// Send notifications for added users
+	for _, user := range addedUsers {
+		o.notifyUserAdded(ctx, &user)
+	}
+
 	if len(deletedUsers) > 0 {
 		o.log.Info("Detected deleted users.", zap.Int("count", len(deletedUsers)))
+	}
+
+	if len(addedUsers) > 0 {
+		o.log.Info("Detected added users.", zap.Int("count", len(addedUsers)))
 	}
 
 	if hasChanges {
@@ -254,9 +293,61 @@ func (o *Obituary) checkForDeletedUsers(ctx context.Context) error {
 	return nil
 }
 
+// notifyUserAdded sends a notification to the configured channel about a new user
+func (o *UserWatch) notifyUserAdded(ctx context.Context, user *slack.User) {
+	o.log.Info("User added.", zap.String("user_id", user.ID), zap.String("user_name", user.RealName))
+
+	var identity string
+	if user.RealName != "" && user.RealName != user.Name {
+		identity = fmt.Sprintf("*%s* (%s)", user.RealName, user.Name)
+	} else {
+		identity = fmt.Sprintf("*%s*", user.Name)
+	}
+	userTitle := "User"
+	if user.IsBot {
+		userTitle = "Bot"
+	}
+
+	message := fmt.Sprintf("%s %s has been added to the Slack organization.", userTitle, identity)
+	profileLink := fmt.Sprintf("%steam/%s", o.slack.OrgURL(), user.ID)
+	actions := []slack.AttachmentAction{
+		{
+			Type: "button",
+			Text: "View Profile",
+			URL:  profileLink,
+		},
+	}
+	if user.Profile.RealName != "" && !user.IsBot {
+		actions = append(actions, slack.AttachmentAction{
+			Type: "button",
+			Text: "View LinkedIn",
+			URL:  linkedinURL(user.Profile.RealName),
+		})
+	}
+	attachment := slack.Attachment{
+		Color:      "#36a64f", // Green color
+		Title:      fmt.Sprintf(":wave: %s Added", userTitle),
+		Text:       message,
+		Footer:     fmt.Sprintf("%s ID: %s; Monitoring %d total users", userTitle, user.ID, len(o.knownUsers)),
+		FooterIcon: "https://platform.slack-edge.com/img/default_application_icon.png",
+		Ts:         json.Number(fmt.Sprintf("%d", time.Now().Unix())),
+		Actions:    actions,
+	}
+
+	_, _, err := o.slack.Client().PostMessageContext(
+		ctx,
+		o.notifyChannel,
+		slack.MsgOptionAttachments(attachment),
+		slack.MsgOptionAsUser(true),
+	)
+	if err != nil {
+		o.log.Error("send notification", zap.Error(err), zap.String("channel", o.notifyChannel))
+	}
+}
+
 // TODO: batch attachments together in single message for multiple users
 // notifyUserDeleted sends a notification to the configured channel about a deleted user
-func (o *Obituary) notifyUserDeleted(ctx context.Context, user *slack.User) {
+func (o *UserWatch) notifyUserDeleted(ctx context.Context, user *slack.User) {
 	o.log.Info("User deleted.", zap.String("user_id", user.ID), zap.String("user_name", user.RealName))
 
 	var identity string
@@ -313,7 +404,7 @@ func linkedinURL(name string) string {
 
 // sendStartupMessage sends a notification to the configured channel to confirm the bot is running
 // but only if the bot hasn't posted any messages to the channel before
-func (o *Obituary) sendStartupMessage(ctx context.Context) {
+func (o *UserWatch) sendStartupMessage(ctx context.Context) {
 	authTest, err := o.slack.Client().AuthTestContext(ctx)
 	if err != nil {
 		o.log.Error("Failed to get bot identity, sending notification anyway", zap.Error(err))
@@ -349,7 +440,7 @@ func (o *Obituary) sendStartupMessage(ctx context.Context) {
 	attachment := slack.Attachment{
 		Color:      "#36a64f", // Green color
 		Title:      "Status",
-		Text:       "🟢 *Slack user obituary feature is now running*",
+		Text:       "🟢 *Slack user monitoring feature is now running*",
 		Footer:     fmt.Sprintf("Monitoring %d users", len(o.knownUsers)),
 		FooterIcon: "https://platform.slack-edge.com/img/default_application_icon.png",
 		Ts:         json.Number(fmt.Sprintf("%d", time.Now().Unix())),
@@ -378,7 +469,7 @@ func (o *Obituary) sendStartupMessage(ctx context.Context) {
 
 func isIntroMessage(msg slack.Message) bool {
 	for _, a := range msg.Attachments {
-		if a.Title == "Status" && strings.Contains(a.Text, "user obituary feature") {
+		if a.Title == "Status" && strings.Contains(a.Text, "user monitoring feature") {
 			return true
 		}
 	}
@@ -386,7 +477,7 @@ func isIntroMessage(msg slack.Message) bool {
 }
 
 // saveUsersToDisk saves the current known users to disk
-func (o *Obituary) saveUsersToDisk() error {
+func (o *UserWatch) saveUsersToDisk() error {
 	if o.usersFile == "" {
 		o.log.Debug("No users file configured, skipping save")
 		return nil
@@ -423,7 +514,7 @@ func (o *Obituary) saveUsersToDisk() error {
 	return nil
 }
 
-func (o *Obituary) loadUsersFromDisk() (map[string]*slack.User, error) {
+func (o *UserWatch) loadUsersFromDisk() (map[string]*slack.User, error) {
 	if o.usersFile == "" {
 		o.log.Debug("No users file configured, skipping load")
 		return nil, nil
@@ -457,7 +548,7 @@ func (o *Obituary) loadUsersFromDisk() (map[string]*slack.User, error) {
 	return result, nil
 }
 
-func (o *Obituary) validateChannel(ctx context.Context) bool {
+func (o *UserWatch) validateChannel(ctx context.Context) bool {
 	if len(o.notifyChannel) < 9 || !strings.HasPrefix(o.notifyChannel, "C") {
 		o.log.Warn("Channel ID format may be invalid - should typically be 'C' followed by alphanumeric chars",
 			zap.String("channel", o.notifyChannel))

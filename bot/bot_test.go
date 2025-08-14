@@ -43,7 +43,6 @@ func TestBot_Setup_MinimalConfig(t *testing.T) {
 			&cli.StringFlag{Name: "env", Value: "development"},
 			&cli.StringFlag{Name: "log-level", Value: "info"},
 			&cli.StringFlag{Name: "data-dir", Value: "./tmp"},
-			&cli.StringSliceFlag{Name: "features"},
 			&cli.UintFlag{Name: "server-port", Value: 8080},
 			&cli.StringFlag{Name: "slack-token", Value: "test-token"},
 			&cli.StringFlag{Name: "slack-signing-secret", Value: "test-secret"},
@@ -169,7 +168,6 @@ func createMinimalCommand() *cli.Command {
 			&cli.StringFlag{Name: "env", Value: "development"},
 			&cli.StringFlag{Name: "log-level", Value: "info"},
 			&cli.StringFlag{Name: "data-dir", Value: "./tmp"},
-			&cli.StringSliceFlag{Name: "features"},
 			&cli.UintFlag{Name: "server-port", Value: 8080},
 			&cli.StringFlag{Name: "slack-token", Value: "test-token"},
 			&cli.StringFlag{Name: "slack-signing-secret", Value: "test-secret"},
@@ -189,63 +187,6 @@ func createMinimalCommand() *cli.Command {
 	// Initialize the command with test args
 	app.Run(context.Background(), []string{"test-app"})
 	return app
-}
-
-func TestBot_Setup_WithFeatures(t *testing.T) {
-	buildOpts := config.BuildOpts{
-		BuildVersion:     "test-version",
-		BuildTime:        "test-time",
-		BuildEnvironment: "development",
-	}
-
-	bot := NewBot(buildOpts)
-	ctx := context.Background()
-
-	// Create command with features enabled
-	app := &cli.Command{
-		Name: "test-app",
-		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "env", Value: "development"},
-			&cli.StringFlag{Name: "log-level", Value: "debug"},
-			&cli.StringFlag{Name: "data-dir", Value: "./tmp"},
-			&cli.StringSliceFlag{Name: "features", Value: []string{"chat", "vibecheck"}},
-			&cli.UintFlag{Name: "server-port", Value: 8080},
-			&cli.StringFlag{Name: "slack-token", Value: "test-token"},
-			&cli.StringFlag{Name: "slack-signing-secret", Value: "test-secret"},
-			&cli.StringFlag{Name: "openai-api-key", Value: "test-openai-key"},
-			&cli.StringSliceFlag{Name: "slack-preferred-users", Value: []string{"user1", "user2"}},
-			&cli.StringSliceFlag{Name: "slack-preferred-channels", Value: []string{"channel1"}},
-			&cli.StringFlag{Name: "slack-obituary-notify-channel", Value: "obituary-channel"},
-			&cli.StringFlag{Name: "slack-events-path", Value: "/custom/events"},
-			&cli.StringFlag{Name: "config-file", Value: ""},
-		},
-		Action: func(ctx context.Context, cmd *cli.Command) error {
-			return nil
-		},
-	}
-
-	app.Run(context.Background(), []string{"test-app"})
-
-	_, err := bot.Setup(ctx, app)
-	// Setup will fail due to invalid Slack credentials, but we can test feature initialization
-	if err == nil {
-		t.Error("Setup() should fail with invalid Slack credentials")
-	}
-
-	// Check that features were processed correctly
-	if len(bot.config.Features) != 2 {
-		t.Errorf("Setup() features length = %d, want 2", len(bot.config.Features))
-	}
-
-	// Components won't be initialized if Slack setup fails
-	// This is expected behavior - features are only initialized after Slack is working
-	if bot.chat != nil {
-		t.Error("Setup() should not initialize chat component when Slack setup fails")
-	}
-
-	if bot.vibecheck != nil {
-		t.Error("Setup() should not initialize vibecheck component when Slack setup fails")
-	}
 }
 
 func BenchmarkNewBot(b *testing.B) {

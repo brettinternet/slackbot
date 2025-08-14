@@ -12,20 +12,14 @@ import (
 	"slackbot.arpa/bot/aichat"
 	"slackbot.arpa/bot/chat"
 	"slackbot.arpa/bot/http"
-	"slackbot.arpa/bot/obituary"
 	"slackbot.arpa/bot/slack"
+	"slackbot.arpa/bot/user"
 	"slackbot.arpa/bot/vibecheck"
 )
 
-type Feature string
 type Environment string
 
 const (
-	FeatureObituary  Feature = "obituary"
-	FeatureChat      Feature = "chat"
-	FeatureVibecheck Feature = "vibecheck"
-	FeatureAIChat    Feature = "aichat"
-
 	EnvironmentDevelopment Environment = "development"
 	EnvironmentProduction  Environment = "production"
 )
@@ -34,10 +28,6 @@ var Environments = []string{EnvironmentDevelopment.String(), EnvironmentProducti
 
 func IsEnvironment(v string) bool {
 	return slices.Contains(Environments, strings.ToLower(v))
-}
-
-func (f Feature) String() string {
-	return string(f)
 }
 
 func (e Environment) String() string {
@@ -53,18 +43,6 @@ func environmentFromString(s string) Environment {
 	default:
 		return ""
 	}
-}
-
-var (
-	Features = []Feature{FeatureObituary, FeatureChat, FeatureVibecheck, FeatureAIChat}
-)
-
-func IsFeature(f string) bool {
-	return slices.Contains(Features, Feature(f))
-}
-
-func HasFeature(features []Feature, f Feature) bool {
-	return slices.Contains(features, f)
 }
 
 // From LDFLAGS
@@ -89,42 +67,40 @@ func (l BuildOpts) MakeConfig(cmd *cli.Command) (Config, error) {
 		environment = EnvironmentProduction.String()
 	}
 	opts := configOpts{
-		Version:               l.BuildVersion,
-		BuildTime:             l.BuildTime,
-		LogLevel:              cmd.String("log-level"),
-		Environment:           environment,
-		DataDir:               cmd.String("data-dir"),
-		Features:              cmd.StringSlice("features"),
-		ServerPort:            cmd.Uint32("server-port"),
-		SlackToken:            cmd.String("slack-token"),
-		SlackSigningSecret:    cmd.String("slack-signing-secret"),
-		OpenAIAPIKey:          cmd.String("openai-api-key"),
-		PreferredUsers:        cmd.StringSlice("slack-preferred-users"),
-		PreferredChannels:     cmd.StringSlice("slack-preferred-channels"),
-		ObituaryNotifyChannel: cmd.String("slack-obituary-notify-channel"),
-		SlackEventsPath:       cmd.String("slack-events-path"),
-		ConfigFile:            cmd.String("config-file"),
+		Version:            l.BuildVersion,
+		BuildTime:          l.BuildTime,
+		LogLevel:           cmd.String("log-level"),
+		Environment:        environment,
+		DataDir:            cmd.String("data-dir"),
+		ServerPort:         cmd.Uint32("server-port"),
+		SlackToken:         cmd.String("slack-token"),
+		SlackSigningSecret: cmd.String("slack-signing-secret"),
+		OpenAIAPIKey:       cmd.String("openai-api-key"),
+		PreferredUsers:     cmd.StringSlice("slack-preferred-user"),
+		PreferredChannels:  cmd.StringSlice("slack-preferred-channels"),
+		UserNotifyChannel:  cmd.String("slack-user-notify-channel"),
+		SlackEventsPath:    cmd.String("slack-events-path"),
+		ConfigFile:         cmd.String("config-file"),
 	}
 
 	return newConfig(opts)
 }
 
 type configOpts struct {
-	Version               string
-	BuildTime             string
-	LogLevel              string
-	Environment           string
-	DataDir               string
-	Features              []string
-	ServerPort            uint32
-	SlackToken            string
-	SlackSigningSecret    string
-	OpenAIAPIKey          string
-	PreferredUsers        []string
-	PreferredChannels     []string
-	ObituaryNotifyChannel string
-	SlackEventsPath       string
-	ConfigFile            string
+	Version            string
+	BuildTime          string
+	LogLevel           string
+	Environment        string
+	DataDir            string
+	ServerPort         uint32
+	SlackToken         string
+	SlackSigningSecret string
+	OpenAIAPIKey       string
+	PreferredUsers     []string
+	PreferredChannels  []string
+	UserNotifyChannel  string
+	SlackEventsPath    string
+	ConfigFile         string
 }
 
 type Config struct {
@@ -134,10 +110,9 @@ type Config struct {
 	Environment Environment
 	DataDir     string
 	ConfigFile  string
-	Features    []Feature // Feature flags
 	Server      http.Config
 	Slack       slack.Config
-	Obituary    obituary.Config
+	User        user.Config
 	Chat        chat.Config
 	Vibecheck   vibecheck.Config
 	AI          ai.Config
@@ -145,13 +120,6 @@ type Config struct {
 }
 
 func newConfig(opts configOpts) (Config, error) {
-	var features []Feature
-	for _, f := range opts.Features {
-		if IsFeature(f) {
-			features = append(features, Feature(f))
-		}
-	}
-
 	dataDir := opts.DataDir
 	if dataDir == "" {
 		dataDir = "./tmp"
@@ -165,7 +133,6 @@ func newConfig(opts configOpts) (Config, error) {
 		LogLevel:    opts.LogLevel,
 		Environment: environmentFromString(opts.Environment),
 		DataDir:     dataDir,
-		Features:    features,
 		ConfigFile:  opts.ConfigFile,
 		Server: http.Config{
 			ServerPort:     opts.ServerPort,
@@ -177,8 +144,8 @@ func newConfig(opts configOpts) (Config, error) {
 			Debug:             false,
 			PreferredChannels: opts.PreferredChannels,
 		},
-		Obituary: obituary.Config{
-			NotifyChannel: opts.ObituaryNotifyChannel,
+		User: user.Config{
+			NotifyChannel: opts.UserNotifyChannel,
 			DataDir:       dataDir,
 		},
 		Chat: chat.Config{

@@ -1,14 +1,11 @@
 [tools]
+bun = "latest"
+dotenv = "latest"
+dprint = "latest"
 go = "latest"
-golangci-lint = "latest"
-pre-commit = "latest"
+gitleaks = "latest"
+lefthook = "latest"
 task = "latest"
-uv = "latest"
-
-yamllint = "latest"
-"pipx:yamlfix" = "latest"
-prettier = "latest"
 
 [settings]
 disable_backends = ["asdf"]
-pipx_uvx = true

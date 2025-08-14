@@ -4,6 +4,7 @@ vibecheck:
   good_text: [V I B E C H E C K - P A S S E D]
   bad_reactions: [no_entry]
   bad_text: [V I B E C H E C K - F A I L E D]
+
 chat:
   responses:
     - pattern: hello
@@ -12,7 +13,7 @@ chat:
     - pattern: thanks|thank you|thx|ty
       message: You're welcome!
       is_regexp: true
-      reactions: ['+1']
+      reactions: ["+1"]
     - pattern: .*vibe.*
       is_regexp: true
       reactions: [ok, vibecheck]

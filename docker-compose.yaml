@@ -8,7 +8,9 @@ x-options: &options
     restart_policy:
       condition: unless-stopped
   env_file: [.env]
+
 name: slackbot
+
 services:
   slackbot:
     <<: *options
@@ -30,6 +32,7 @@ services:
       traefik.http.routers.client.service: client-service
       traefik.http.routers.client.entrypoints: web
       traefik.http.services.client-service.loadbalancer.server.port: 4200
+
   traefik:
     <<: *options
     image: traefik:v3.3
@@ -64,14 +67,18 @@ services:
       - --certificatesresolvers.leresolver.acme.storage=/etc/traefik/acme.json
       - --certificatesresolvers.leresolver.acme.email=${ACME_EMAIL}
       - --serverstransport.insecureskipverify=true
-    ports: [80:80, 443:443]
-    volumes: [/var/run/docker.sock:/var/run/docker.sock:ro]
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     labels:
       traefik.enable: true
       traefik.http.routers.traefik.rule: Host(`traefik.${DOMAIN}`)
       traefik.http.routers.traefik.service: api@internal
       traefik.http.routers.traefik.entrypoints: websecure
       traefik.tls.option.default.alpnProtocols: http/1.1,h2,dot
+
   cloudflared-tunnel:
     <<: *options
     image: cloudflare/cloudflared:2025.5.0
@@ -84,6 +91,7 @@ services:
       TUNNEL_URL: https://traefik
       TUNNEL_ID: ${CLOUDFLARE_TUNNEL_ID}
     command: [tunnel, run]
+
   cloudflare-companion:
     <<: *options
     image: tiredofit/traefik-cloudflare-companion:latest

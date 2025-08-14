@@ -1,25 +1,66 @@
 ---
 # yaml-language-server: $schema=https://taskfile.dev/schema.json
-version: '3'
+version: "3"
+
 vars:
   GOPATH:
     sh: go env GOPATH
-  GO_BIN: '{{.GOPATH}}/bin'
+  GO_BIN: "{{.GOPATH}}/bin"
+
 tasks:
   init:
-    desc: Install system dependencies
+    desc: Install dependencies
     cmds:
       - task: mise
+      - task: create-env-file
+      - task: direnv
+      - task: lefthook
       - task: gobin
+
   mise:
     desc: Install workstation dependencies
-    cmds: [mise trust --silent -a, mise install]
+    cmds:
+      - mise trust -q -a
+      - mise install -q
     preconditions:
       - sh: command -v mise
         msg: Mise is not installed
+
+  create-env-file:
+    desc: Create local environment variable file
+    cmds:
+      - cp example.env .env
+    status:
+      - test -f .env
+
+  direnv:
+    desc: Run direnv hooks
+    cmd: direnv allow .
+    status:
+      - "[[ $(direnv status --json | jq '.state.foundRC.allowed') == 0 ]]"
+      - "[[ $(direnv status --json | jq '.state.loadedRC.allowed') == 0 ]]"
+    preconditions:
+      - command -v direnv
+      - test -f .envrc
+
+  lefthook:
+    desc: Install Lefthook
+    cmds:
+      - lefthook install
+    preconditions:
+      - command -v lefthook
+      - test -f lefthook.yaml
+
   gobin:
     desc: Install Go binaries
-    generates: ['{{.GO_BIN}}/air']
+    generates:
+      - "{{.GO_BIN}}/air"
+      - "{{.GO_BIN}}/golint"
     cmds:
-      - for: [github.com/air-verse/air@latest, golang.org/x/lint/golint@latest]
+      - for:
+          - github.com/air-verse/air@latest
+          - golang.org/x/lint/golint@latest
+          - github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.3.1
+          - github.com/securego/gosec/v2/cmd/gosec@latest
+          - github.com/kisielk/errcheck@latest
         cmd: go install {{ .ITEM }}
