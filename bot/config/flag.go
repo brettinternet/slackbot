@@ -66,7 +66,7 @@ func Flags() []cli.Flag {
 			Name:    "config-file",
 			Aliases: []string{"config", "c"},
 			Usage:   "Path to yaml or json file of chat responses definition.",
-			Value:   "./config.yaml",
+			Value:   "../cmd/bot/config.yaml",
 			Sources: cli.EnvVars("CONFIG_FILE"),
 			Validator: func(v string) error {
 				if v == "" {

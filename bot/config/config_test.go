@@ -100,7 +100,7 @@ func TestBuildOpts_MakeConfig(t *testing.T) {
 			&cli.StringSliceFlag{Name: "slack-preferred-channels", Value: []string{"channel1"}},
 			&cli.StringFlag{Name: "slack-user-notify-channel", Value: "user-notify-channel"},
 			&cli.StringFlag{Name: "slack-events-path", Value: "/custom/events"},
-			&cli.StringFlag{Name: "config-file", Value: "config.yaml"},
+			&cli.StringFlag{Name: "config-file", Value: "../cmd/bot/config.yaml"},
 		},
 	}
 
@@ -284,7 +284,7 @@ func TestNewConfig(t *testing.T) {
 		PreferredChannels:  []string{"channel1"},
 		UserNotifyChannel:  "user-notify",
 		SlackEventsPath:    "/events",
-		ConfigFile:         "config.yaml",
+		ConfigFile:         "../cmd/bot/config.yaml",
 	}
 
 	config, err := newConfig(opts)

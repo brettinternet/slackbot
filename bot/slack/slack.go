@@ -51,6 +51,10 @@ func (s *Slack) Setup(ctx context.Context) error {
 }
 
 func (s *Slack) Start(ctx context.Context) error {
+	if s.client == nil {
+		return fmt.Errorf("slack client not initialized - call Setup() first")
+	}
+
 	if err := s.client.SetUserPresenceContext(ctx, "auto"); err != nil {
 		return fmt.Errorf("user presence auto: %w", err)
 	}
@@ -66,6 +70,10 @@ func (s *Slack) Start(ctx context.Context) error {
 }
 
 func (s *Slack) Stop(ctx context.Context) error {
+	if s.client == nil {
+		return nil // No client to stop
+	}
+
 	if err := s.client.SetUserPresenceContext(ctx, "away"); err != nil {
 		return fmt.Errorf("user presence away: %w", err)
 	}

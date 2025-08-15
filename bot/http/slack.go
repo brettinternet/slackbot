@@ -36,12 +36,6 @@ func (h *Server) registerSlackEndpoints() {
 
 // handleSlackEvents processes Slack events
 func (h *Server) handleSlackEvents(w http.ResponseWriter, r *http.Request) {
-	if len(h.slackEventProcessors) == 0 {
-		h.log.Debug("No event processors registered, ignoring event")
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-
 	body, err := readRequestBody(r)
 	if err != nil {
 		h.log.Error("Failed to read request body.", zap.Error(err))
@@ -73,9 +67,23 @@ func (h *Server) handleSlackEvents(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", "text/plain")
-		_, _ = w.Write([]byte(challenge.Challenge))
+		w.Header().Set("Content-Type", "application/json")
+		response := map[string]string{"challenge": challenge.Challenge}
+		responseBytes, err := json.Marshal(response)
+		if err != nil {
+			h.log.Error("Failed to marshal challenge response", zap.Error(err))
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write(responseBytes)
 		h.log.Info("Responded to URL verification challenge")
+		return
+	}
+
+	// Check if we have processors for regular events
+	if len(h.slackEventProcessors) == 0 {
+		h.log.Debug("No event processors registered, ignoring event")
+		w.WriteHeader(http.StatusOK)
 		return
 	}
 

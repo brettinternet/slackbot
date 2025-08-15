@@ -28,9 +28,7 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key:
-            ${{ runner.os }}-go-${{ matrix.go-version }}-${{ hashFiles('**/go.sum')
-            }}
+          key: ${{ runner.os }}-go-${{ matrix.go-version }}-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             ${{ runner.os }}-go-${{ matrix.go-version }}-
 
@@ -70,6 +68,7 @@ jobs:
     steps:
       - name: Check out code
         uses: actions/checkout@v4
+
       - name: Set up Go
         uses: actions/setup-go@v4
         with:

@@ -2,6 +2,7 @@
 bun = "latest"
 dotenv = "latest"
 dprint = "latest"
+direnv = "latest"
 go = "latest"
 gitleaks = "latest"
 lefthook = "latest"
