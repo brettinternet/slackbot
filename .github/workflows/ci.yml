@@ -14,13 +14,19 @@ jobs:
       matrix:
         go-version: [1.23.x, 1.24.x]
     steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
           go-version: ${{ matrix.go-version }}
 
-      - name: Check out code
-        uses: actions/checkout@v4
+      - name: Install Task
+        uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Cache Go modules
         uses: actions/cache@v3
@@ -32,17 +38,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-${{ matrix.go-version }}-
 
-      - name: Download dependencies
-        run: go mod download
-
-      - name: Verify dependencies
-        run: go mod verify
+      - name: Install dependencies
+        run: task bot:setup
 
       - name: Run tests
         run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
 
       - name: Run tests with verbose output
-        run: go test -v ./...
+        run: task test
 
       - name: Check test coverage
         run: |
@@ -61,8 +64,8 @@ jobs:
           name: codecov-umbrella
           fail_ci_if_error: false
 
-  lint:
-    name: Lint
+  check:
+    name: Check (Lint & Security)
     if: "!contains(github.event.head_commit.message, 'skipci')"
     runs-on: ubuntu-latest
     steps:
@@ -74,35 +77,34 @@ jobs:
         with:
           go-version: 1.24.x
 
-      - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v3
+      - name: Install Task
+        uses: arduino/setup-task@v2
         with:
-          version: latest
-          args: --timeout=5m
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-  security:
-    name: Security Scan
-    if: "!contains(github.event.head_commit.message, 'skipci')"
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out code
-        uses: actions/checkout@v4
+      - name: Install dependencies
+        run: task bot:setup
 
-      - name: Set up Go
-        uses: actions/setup-go@v4
-        with:
-          go-version: 1.24.x
+      - name: Install required tools
+        run: |
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+          go install github.com/securecodewarrior/gosec/v2/cmd/gosec@latest
+          go install github.com/kisielk/errcheck@latest
 
-      - name: Run Gosec Security Scanner
-        uses: securecodewarrior/github-action-gosec@master
-        with:
-          args: ./...
+      - name: Install dprint
+        run: |
+          curl -fsSL https://dprint.dev/install.sh | sh
+          echo "$HOME/.dprint/bin" >> $GITHUB_PATH
+
+      - name: Run all checks
+        run: task check
 
   build:
     name: Build
     if: "!contains(github.event.head_commit.message, 'skipci')"
     runs-on: ubuntu-latest
-    needs: [test, lint]
+    needs: [test, check]
     steps:
       - name: Check out code
         uses: actions/checkout@v4

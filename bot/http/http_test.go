@@ -28,7 +28,6 @@ func (m *mockSlackService) VerifyRequest(headers http.Header, body []byte) error
 type mockSlackEventProcessor struct {
 	processEventCalled bool
 	lastEvent         interface{}
-	shouldProcessFail  bool
 }
 
 func (m *mockSlackEventProcessor) PushEvent(event slackevents.EventsAPIEvent) {

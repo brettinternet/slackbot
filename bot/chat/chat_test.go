@@ -12,19 +12,7 @@ import (
 
 // mockSlackService for testing
 type mockSlackService struct {
-	client           *slack.Client
-	postMessageCalls []postMessageCall
-	addReactionCalls []addReactionCall
-}
-
-type postMessageCall struct {
-	channelID string
-	options   []slack.MsgOption
-}
-
-type addReactionCall struct {
-	name      string
-	item      slack.ItemRef
+	client *slack.Client
 }
 
 func (m *mockSlackService) Client() *slack.Client {
@@ -81,7 +69,7 @@ func TestChat_Start(t *testing.T) {
 	}
 
 	// Stop to clean up
-	chat.Stop(ctx)
+	_ = chat.Stop(ctx)
 }
 
 func TestChat_Stop(t *testing.T) {
@@ -159,8 +147,8 @@ func TestChat_ProcessSlackEvent_AppMention(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	chat.Start(ctx)
-	defer chat.Stop(ctx)
+	_ = chat.Start(ctx)
+	defer func() { _ = chat.Stop(ctx) }()
 
 	// Create an app mention event
 	event := &slackevents.AppMentionEvent{
@@ -191,8 +179,8 @@ func TestChat_PushEvent(t *testing.T) {
 	chat := NewChat(logger, config, mockSlack)
 
 	ctx := context.Background()
-	chat.Start(ctx)
-	defer chat.Stop(ctx)
+	_ = chat.Start(ctx)
+	defer func() { _ = chat.Stop(ctx) }()
 
 	// Create a test event
 	event := slackevents.EventsAPIEvent{
@@ -232,8 +220,8 @@ func BenchmarkChat_PushEvent(b *testing.B) {
 	chat := NewChat(logger, config, mockSlack)
 
 	ctx := context.Background()
-	chat.Start(ctx)
-	defer chat.Stop(ctx)
+	_ = chat.Start(ctx)
+	defer func() { _ = chat.Stop(ctx) }()
 
 	event := slackevents.EventsAPIEvent{
 		Type: slackevents.CallbackEvent,

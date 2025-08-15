@@ -155,17 +155,15 @@ func TestCommandRoot_WithConfigFile(t *testing.T) {
 	ctx := context.Background()
 	args := []string{
 		"bot",
-		"start",
 		"--config-file", "../cmd/bot/config.yaml",
-		"--slack-token", "test-token",
-		"--slack-signing-secret", "test-secret",
+		// No Slack credentials - should fail early but set start flag
 	}
 
 	err := cmd.Run(ctx, args)
 	
-	// Should not error at CLI level
-	if err != nil {
-		t.Errorf("Start command with config file error = %v", err)
+	// Should fail with no credentials error but still set start flag
+	if err != nil && err.Error() != "no Slack authentication credentials provided" {
+		t.Errorf("Start command should fail with no credentials error, got = %v", err)
 	}
 
 	if !*start {
@@ -187,17 +185,15 @@ func TestCommandRoot_WithFeatures(t *testing.T) {
 	ctx := context.Background()
 	args := []string{
 		"bot",
-		"start",
-		"--slack-token", "test-token",
-		"--slack-signing-secret", "test-secret",
 		"--openai-api-key", "test-openai-key",
+		// No Slack credentials - should fail early but set start flag
 	}
 
 	err := cmd.Run(ctx, args)
 	
-	// Should not error at CLI level
-	if err != nil {
-		t.Errorf("Start command with features error = %v", err)
+	// Should fail with no credentials error but still set start flag
+	if err != nil && err.Error() != "no Slack authentication credentials provided" {
+		t.Errorf("Start command should fail with no credentials error, got = %v", err)
 	}
 
 	if !*start {
@@ -219,17 +215,15 @@ func TestCommandRoot_EnvironmentOverride(t *testing.T) {
 	ctx := context.Background()
 	args := []string{
 		"bot",
-		"start",
 		"--env", "production", // Override to production
-		"--slack-token", "test-token",
-		"--slack-signing-secret", "test-secret",
+		// No Slack credentials - should fail early but set start flag
 	}
 
 	err := cmd.Run(ctx, args)
 	
-	// Should not error at CLI level
-	if err != nil {
-		t.Errorf("Start command with env override error = %v", err)
+	// Should fail with no credentials error but still set start flag
+	if err != nil && err.Error() != "no Slack authentication credentials provided" {
+		t.Errorf("Start command should fail with no credentials error, got = %v", err)
 	}
 
 	if !*start {
@@ -254,17 +248,15 @@ func TestCommandRoot_LogLevels(t *testing.T) {
 			ctx := context.Background()
 			args := []string{
 				"bot",
-				"start",
 				"--log-level", level,
-				"--slack-token", "test-token",
-				"--slack-signing-secret", "test-secret",
+				// No Slack credentials - should fail early but set start flag
 			}
 
 			err := cmd.Run(ctx, args)
 			
-			// Should not error at CLI level
-			if err != nil {
-				t.Errorf("Start command with log level %v error = %v", level, err)
+			// Should fail with no credentials error but still set start flag
+			if err != nil && err.Error() != "no Slack authentication credentials provided" {
+				t.Errorf("Start command should fail with no credentials error, got = %v", err)
 			}
 
 			if !*start {
@@ -288,17 +280,15 @@ func TestCommandRoot_CustomPorts(t *testing.T) {
 	ctx := context.Background()
 	args := []string{
 		"bot",
-		"start",
 		"--server-port", "9000",
-		"--slack-token", "test-token",
-		"--slack-signing-secret", "test-secret",
+		// No Slack credentials - should fail early but set start flag
 	}
 
 	err := cmd.Run(ctx, args)
 	
-	// Should not error at CLI level
-	if err != nil {
-		t.Errorf("Start command with custom port error = %v", err)
+	// Should fail with no credentials error but still set start flag
+	if err != nil && err.Error() != "no Slack authentication credentials provided" {
+		t.Errorf("Start command should fail with no credentials error, got = %v", err)
 	}
 
 	if !*start {
@@ -320,20 +310,18 @@ func TestCommandRoot_SlackConfiguration(t *testing.T) {
 	ctx := context.Background()
 	args := []string{
 		"bot",
-		"start",
-		"--slack-token", "xoxb-test-token",
-		"--slack-signing-secret", "test-signing-secret",
 		"--slack-preferred-users", "user1,user2,user3",
 		"--slack-preferred-channels", "general,random",
 		"--slack-user-notify-channel", "obituaries",
 		"--slack-events-path", "/custom/events",
+		// No Slack credentials - should fail early but set start flag
 	}
 
 	err := cmd.Run(ctx, args)
 	
-	// Should not error at CLI level
-	if err != nil {
-		t.Errorf("Start command with full Slack config error = %v", err)
+	// Should fail with no credentials error but still set start flag
+	if err != nil && err.Error() != "no Slack authentication credentials provided" {
+		t.Errorf("Start command should fail with no credentials error, got = %v", err)
 	}
 
 	if !*start {
@@ -363,6 +351,6 @@ func BenchmarkCommandRoot_Parse(b *testing.B) {
 	for b.Loop() {
 		bot := NewBot(buildOpts)
 		_, cmd := NewCommandRoot(bot)
-		cmd.Run(ctx, args)
+		_ = cmd.Run(ctx, args)
 	}
 }

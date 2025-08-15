@@ -314,6 +314,6 @@ func BenchmarkSlack_Setup(b *testing.B) {
 	for b.Loop() {
 		slack := NewSlack(logger, config)
 		// Note: This will error due to invalid token, but we're measuring performance
-		slack.Setup(ctx)
+		_ = slack.Setup(ctx)
 	}
 }

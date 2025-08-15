@@ -212,7 +212,7 @@ func BenchmarkSleepContext(b *testing.B) {
 	duration := 1 * time.Millisecond
 
 	for b.Loop() {
-		sleepContext(ctx, duration)
+		_ = sleepContext(ctx, duration)
 	}
 }
 
@@ -221,6 +221,6 @@ func BenchmarkRun_Help(b *testing.B) {
 	ctx := context.Background()
 
 	for b.Loop() {
-		run(ctx, args)
+		_ = run(ctx, args)
 	}
 }
