@@ -6,6 +6,8 @@ vibecheck:
   bad_text: [V I B E C H E C K - F A I L E D]
   ban_duration: 5m
 
+personas_sticky_duration: 30m
+
 personas:
   office_comedian: |
     You're the office comedian who turns every conversation into a stand-up routine.

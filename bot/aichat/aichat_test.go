@@ -74,6 +74,7 @@ func TestAIChat_RandomPersonaName(t *testing.T) {
 			"test1": "Test persona 1",
 			"test2": "Test persona 2",
 		},
+		StickyDuration: 30 * time.Minute,
 	}
 	
 	aiChat := &AIChat{
@@ -88,7 +89,10 @@ func TestAIChat_RandomPersonaName(t *testing.T) {
 	}
 	
 	// Test with empty personas (should return default)
-	emptyConfig := Config{Personas: map[string]string{}}
+	emptyConfig := Config{
+		Personas:       map[string]string{},
+		StickyDuration: 30 * time.Minute,
+	}
 	aiChatEmpty := &AIChat{
 		log:    logger,
 		config: emptyConfig,

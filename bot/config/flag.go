@@ -148,6 +148,15 @@ func Flags() []cli.Flag {
 			),
 		},
 		&cli.DurationFlag{
+			Name:  "personas-sticky-duration",
+			Usage: "Duration for which a persona is assigned to a user before changing.",
+			Value: 30 * time.Minute,
+			Sources: cli.NewValueSourceChain(
+				cli.EnvVar("AI_PERSONAS_STICKY_DURATION"),
+				yaml.YAML("personas_sticky_duration", altsrc.NewStringPtrSourcer(&configFile)),
+			),
+		},
+		&cli.DurationFlag{
 			Name:  "vibecheck-ban-duration",
 			Usage: "Duration to ban users for when they fail a vibecheck.",
 			Value: 5 * time.Minute,

@@ -19,10 +19,6 @@ import (
 	"slackbot.arpa/tools/random"
 )
 
-const (
-	personaExpirationDuration = 30 * time.Minute // Personas expire after 30 minutes
-)
-
 const eventChannelSize = 10
 
 type aiService interface {
@@ -36,8 +32,9 @@ type slackService interface {
 type FileConfig struct{}
 
 type Config struct {
-	DataDir  string
-	Personas map[string]string
+	DataDir       string
+	Personas      map[string]string
+	StickyDuration time.Duration
 }
 
 type personaAssignment struct {
@@ -342,7 +339,7 @@ func (a *AIChat) userPersona(userID string) string {
 	defer a.mutex.Unlock()
 
 	if assignment, ok := a.stickyPersonas[userID]; ok {
-		if time.Since(assignment.Timestamp) < personaExpirationDuration {
+		if time.Since(assignment.Timestamp) < a.config.StickyDuration {
 			return assignment.Name
 		}
 		delete(a.stickyPersonas, userID)

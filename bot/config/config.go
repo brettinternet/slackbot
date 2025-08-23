@@ -83,10 +83,11 @@ func (l BuildOpts) MakeConfig(cmd *cli.Command) (Config, error) {
 		PreferredUsers:       cmd.StringSlice("slack-preferred-user"),
 		PreferredChannels:    cmd.StringSlice("slack-preferred-channels"),
 		UserNotifyChannel:    cmd.String("slack-user-notify-channel"),
-		SlackEventsPath:      cmd.String("slack-events-path"),
-		ConfigFile:           cmd.String("config-file"),
-		PersonasConfig:       cmd.String("personas-config"),
-		VibecheckBanDuration: cmd.Duration("vibecheck-ban-duration"),
+		SlackEventsPath:        cmd.String("slack-events-path"),
+		ConfigFile:             cmd.String("config-file"),
+		PersonasConfig:         cmd.String("personas-config"),
+		PersonasStickyDuration: cmd.Duration("personas-sticky-duration"),
+		VibecheckBanDuration:   cmd.Duration("vibecheck-ban-duration"),
 	}
 
 	return newConfig(opts)
@@ -108,7 +109,8 @@ type configOpts struct {
 	SlackEventsPath    string
 	ConfigFile         string
 	// AI Chat Personas Configuration
-	PersonasConfig     string
+	PersonasConfig       string
+	PersonasStickyDuration time.Duration
 	// Vibecheck ban duration
 	VibecheckBanDuration time.Duration
 }
@@ -192,8 +194,9 @@ func newConfig(opts configOpts) (Config, error) {
 			OpenAIAPIKey: opts.OpenAIAPIKey,
 		},
 		AIChat: aichat.Config{
-			DataDir:  dataDir,
-			Personas: personas,
+			DataDir:        dataDir,
+			Personas:       personas,
+			StickyDuration: opts.PersonasStickyDuration,
 		},
 	}, nil
 }
