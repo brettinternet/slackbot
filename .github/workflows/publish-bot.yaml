@@ -1,6 +1,7 @@
 ---
 name: Build and publish bot image
-on: # yamllint disable-line rule:truthy
+
+on:
   push:
     branches: [main]
     paths:
@@ -53,7 +54,8 @@ jobs:
           images: |
             ghcr.io/${{ github.actor }}/${{ env.IMAGE_NAME }}
           flavor: latest=auto
-          tags: type=ref,event=branch
+          tags: |
+            type=semver,pattern={{version}}
           labels: |
             org.opencontainers.image.name=${{ env.IMAGE_NAME }}
             org.opencontainers.image.source=https://github.com/${{ env.REPO }}/tree/main/${{ env.IMAGE_NAME }}
