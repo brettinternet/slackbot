@@ -13,6 +13,8 @@ node_modules
 
 mise.local.toml
 
+# AI
+.serena
 CLAUDE.local.md
 
 # Go
