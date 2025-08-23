@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/urfave/cli/v3"
 )
@@ -285,6 +286,7 @@ func TestNewConfig(t *testing.T) {
 		UserNotifyChannel:    "user-notify",
 		SlackEventsPath:      "/events",
 		ConfigFile:           "../cmd/bot/config.yaml",
+		VibecheckBanDuration: 10 * time.Minute,
 	}
 
 	config, err := newConfig(opts)
@@ -312,6 +314,11 @@ func TestNewConfig(t *testing.T) {
 
 	if !reflect.DeepEqual(config.Chat.PreferredUsers, []string{"user1", "user2"}) {
 		t.Errorf("newConfig() Chat.PreferredUsers = %v, want %v", config.Chat.PreferredUsers, []string{"user1", "user2"})
+	}
+
+	// Test vibecheck ban duration configuration
+	if config.Vibecheck.BanDuration != 10*time.Minute {
+		t.Errorf("newConfig() Vibecheck.BanDuration = %v, want %v", config.Vibecheck.BanDuration, 10*time.Minute)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/goccy/go-yaml"
 	"github.com/urfave/cli/v3"
@@ -85,6 +86,7 @@ func (l BuildOpts) MakeConfig(cmd *cli.Command) (Config, error) {
 		SlackEventsPath:      cmd.String("slack-events-path"),
 		ConfigFile:           cmd.String("config-file"),
 		PersonasConfig:       cmd.String("personas-config"),
+		VibecheckBanDuration: cmd.Duration("vibecheck-ban-duration"),
 	}
 
 	return newConfig(opts)
@@ -107,6 +109,8 @@ type configOpts struct {
 	ConfigFile         string
 	// AI Chat Personas Configuration
 	PersonasConfig     string
+	// Vibecheck ban duration
+	VibecheckBanDuration time.Duration
 }
 
 type Config struct {
@@ -182,6 +186,7 @@ func newConfig(opts configOpts) (Config, error) {
 		Vibecheck: vibecheck.Config{
 			PreferredUsers: opts.PreferredUsers,
 			DataDir:        dataDir,
+			BanDuration:    opts.VibecheckBanDuration,
 		},
 		AI: ai.Config{
 			OpenAIAPIKey: opts.OpenAIAPIKey,

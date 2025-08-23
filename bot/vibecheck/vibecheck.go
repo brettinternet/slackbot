@@ -2,6 +2,7 @@ package vibecheck
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 	"slices"
 	"strings"
@@ -32,6 +33,7 @@ type FileConfig struct {
 type Config struct {
 	PreferredUsers []string
 	DataDir        string
+	BanDuration    time.Duration
 }
 
 // Vibecheck handles responding to messages to verify the users vibe
@@ -132,6 +134,8 @@ func (c *Vibecheck) processEvent(ctx context.Context, event slackevents.EventsAP
 				return
 			}
 			c.handleMessageEvent(ctx, ev)
+		case *slackevents.MemberJoinedChannelEvent:
+			c.handleMemberJoinedEvent(ctx, ev)
 		}
 	}
 }
@@ -196,8 +200,8 @@ func (c *Vibecheck) handleMessageEvent(ctx context.Context, ev *slackevents.Mess
 		}
 
 		if !passed && !slices.Contains(c.config.PreferredUsers, ev.User) && !slices.Contains(c.config.PreferredUsers, ev.Username) {
-			// Add user to the kicked users list with a 5-minute timeout
-			c.kickedUsers.AddKickedUser(ev.User, ev.Channel, 5*time.Minute)
+			// Add user to the kicked users list with configured timeout
+			c.kickedUsers.AddKickedUser(ev.User, ev.Channel, c.config.BanDuration)
 
 			time.AfterFunc(5*time.Second, func() {
 				if err := c.slack.Client().KickUserFromConversationContext(ctx, ev.Channel, ev.User); err != nil {
@@ -213,6 +217,64 @@ func (c *Vibecheck) handleMessageEvent(ctx context.Context, ev *slackevents.Mess
 					)
 				}
 			})
+		}
+	}
+}
+
+// handleMemberJoinedEvent checks if a user rejoining a channel is still banned
+func (c *Vibecheck) handleMemberJoinedEvent(ctx context.Context, ev *slackevents.MemberJoinedChannelEvent) {
+	c.log.Debug("Member joined channel",
+		zap.String("user", ev.User),
+		zap.String("channel", ev.Channel),
+	)
+
+	// Check if this user is still banned from this channel
+	if user, isBanned := c.kickedUsers.IsUserBanned(ev.User, ev.Channel); isBanned {
+		timeRemaining := time.Until(user.ReinviteAt)
+		c.log.Info("Banned user attempted to rejoin channel, kicking again",
+			zap.String("user", ev.User),
+			zap.String("channel", ev.Channel),
+			zap.Duration("time_remaining", timeRemaining),
+		)
+
+		// Kick the user again
+		time.AfterFunc(2*time.Second, func() {
+			if err := c.slack.Client().KickUserFromConversationContext(ctx, ev.Channel, ev.User); err != nil {
+				c.log.Error("Failed to re-kick banned user from channel",
+					zap.String("channel", ev.Channel),
+					zap.String("user", ev.User),
+					zap.Error(err),
+				)
+			} else {
+				c.log.Info("Successfully re-kicked banned user from channel",
+					zap.String("channel", ev.Channel),
+					zap.String("user", ev.User),
+				)
+			}
+		})
+
+		// Post a message about the remaining ban time
+		minutes := int(timeRemaining.Minutes())
+		seconds := int(timeRemaining.Seconds()) % 60
+		var timeMessage string
+		if minutes > 0 {
+			timeMessage = fmt.Sprintf("%d minutes and %d seconds", minutes, seconds)
+		} else {
+			timeMessage = fmt.Sprintf("%d seconds", seconds)
+		}
+
+		message := fmt.Sprintf("🚫 User is still banned for %s. Please wait before rejoining.", timeMessage)
+		_, _, err := c.slack.Client().PostMessageContext(
+			ctx,
+			ev.Channel,
+			slack.MsgOptionText(message, false),
+			slack.MsgOptionAsUser(true),
+		)
+		if err != nil {
+			c.log.Error("Failed to post ban time remaining message",
+				zap.String("channel", ev.Channel),
+				zap.Error(err),
+			)
 		}
 	}
 }

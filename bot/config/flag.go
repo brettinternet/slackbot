@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	altsrc "github.com/urfave/cli-altsrc/v3"
 	yaml "github.com/urfave/cli-altsrc/v3/yaml"
@@ -144,6 +145,15 @@ func Flags() []cli.Flag {
 			Sources: cli.NewValueSourceChain(
 				cli.EnvVar("AI_PERSONAS_CONFIG"),
 				yaml.YAML("personas", altsrc.NewStringPtrSourcer(&configFile)),
+			),
+		},
+		&cli.DurationFlag{
+			Name:  "vibecheck-ban-duration",
+			Usage: "Duration to ban users for when they fail a vibecheck.",
+			Value: 5 * time.Minute,
+			Sources: cli.NewValueSourceChain(
+				cli.EnvVar("VIBECHECK_BAN_DURATION"),
+				yaml.YAML("vibecheck.ban_duration", altsrc.NewStringPtrSourcer(&configFile)),
 			),
 		},
 	}

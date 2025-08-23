@@ -62,6 +62,25 @@ func (m *kickedUsersManager) generateKey(userID, channelID string) string {
 	return userID + ":" + channelID
 }
 
+// IsUserBanned checks if a user is currently banned from a channel
+func (k *kickedUsersManager) IsUserBanned(userID, channelID string) (kickedUser, bool) {
+	k.mu.RLock()
+	defer k.mu.RUnlock()
+	
+	key := k.generateKey(userID, channelID)
+	user, exists := k.users[key]
+	if !exists || user.Reinvited {
+		return kickedUser{}, false
+	}
+	
+	// Check if ban time has expired
+	if time.Now().After(user.ReinviteAt) {
+		return kickedUser{}, false
+	}
+	
+	return user, true
+}
+
 // AddKickedUser adds a user to the kicked list with a reinvite time
 func (m *kickedUsersManager) AddKickedUser(userID, channelID string, timeout time.Duration) {
 	m.mu.Lock()
