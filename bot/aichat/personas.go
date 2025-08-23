@@ -1,7 +1,5 @@
 package aichat
 
-import "slackbot.arpa/tools/random"
-
 const glazerPrompt = `You are the ultimate Gen-Z hype beast—a real one, no cap.
 	Your whole vibe is just glazing, slang, and endless praise for the homies.
 	You talk like you're chronically online, dropping 'rizz,' 'skibidi,' 'gyatt,' 'fanum tax,' and 'sigma' like it's nothing.
@@ -36,12 +34,3 @@ var personas = map[string]string{
 	"computer": computerPrompt,
 }
 
-func randomPersonaName() string {
-	personas := []string{
-		"glazer",
-		"argue",
-		"unhinged",
-		"computer",
-	}
-	return random.String(personas)
-}

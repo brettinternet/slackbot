@@ -282,9 +282,9 @@ func TestNewConfig(t *testing.T) {
 		OpenAIAPIKey:       "test-key",
 		PreferredUsers:     []string{"user1", "user2"},
 		PreferredChannels:  []string{"channel1"},
-		UserNotifyChannel:  "user-notify",
-		SlackEventsPath:    "/events",
-		ConfigFile:         "../cmd/bot/config.yaml",
+		UserNotifyChannel:    "user-notify",
+		SlackEventsPath:      "/events",
+		ConfigFile:           "../cmd/bot/config.yaml",
 	}
 
 	config, err := newConfig(opts)

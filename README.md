@@ -10,8 +10,8 @@ See example [config.yaml](./cmd/bot/config.yaml) or environment variables in [fl
 
 - Obituaries/User watch to get notified when users are added or removed from the Slack org (scopes: `channels:history`, `groups:history` and `chat:write`.)
 - Chat responses and reactions, requires `SLACK_SIGNING_SECRET`, configured responses, and a public event endpoint.
-- Vibecheck: check the vibe
-- AI Chat with different prompted, unhinged, sticky (assigned to users at random for 1 hour) personas, requires `SLACK_SIGNING_SECRET`, `OPENAI_API_KEY` and configuring a public event endpoint.
+- Vibecheck - failing a vibecheck will result in a temporary ban from the channel
+- AI Chat with configurable prompts for sticky (assigned to users at random for 1 hour) personas, requires `SLACK_SIGNING_SECRET`, `OPENAI_API_KEY` and configuring a public event endpoint.
 
 ## Setup
 

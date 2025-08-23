@@ -138,6 +138,14 @@ func Flags() []cli.Flag {
 				cli.File("/run/secrets/openai_api_key"),
 			),
 		},
+		&cli.StringFlag{
+			Name:  "personas-config",
+			Usage: "JSON or YAML string defining AI Chat personas as name:prompt pairs.",
+			Sources: cli.NewValueSourceChain(
+				cli.EnvVar("AI_PERSONAS_CONFIG"),
+				yaml.YAML("personas", altsrc.NewStringPtrSourcer(&configFile)),
+			),
+		},
 	}
 }
 

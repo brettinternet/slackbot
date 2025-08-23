@@ -35,7 +35,10 @@ type slackService interface {
 
 type FileConfig struct{}
 
-type Config struct{}
+type Config struct {
+	DataDir  string
+	Personas map[string]string
+}
 
 type personaAssignment struct {
 	Name      string    // The name of the persona
@@ -47,6 +50,7 @@ type AIChat struct {
 	config         Config
 	slack          slackService
 	ai             aiService
+	context        *ContextStorage
 	stopCh         chan struct{}
 	eventsCh       chan slackevents.EventsAPIEvent
 	isConnected    atomic.Bool
@@ -57,11 +61,19 @@ type AIChat struct {
 }
 
 func NewAIChat(log *zap.Logger, c Config, s slackService, a aiService) *AIChat {
+	contextStorage, err := NewContextStorage(c.DataDir)
+	if err != nil {
+		log.Error("Failed to initialize context storage", zap.Error(err))
+		// Continue without context storage - fallback gracefully
+		contextStorage = nil
+	}
+	
 	return &AIChat{
 		log:            log,
 		config:         c,
 		slack:          s,
 		ai:             a,
+		context:        contextStorage,
 		eventlimiter:   rate.NewLimiter(rate.Every(3*time.Minute), 5),
 		mentionLimiter: rate.NewLimiter(rate.Every(1*time.Minute), 3),
 		stickyPersonas: make(map[string]personaAssignment),
@@ -84,6 +96,15 @@ func (a *AIChat) Start(ctx context.Context) error {
 }
 
 func (a *AIChat) Stop(ctx context.Context) error {
+	a.isConnected.Store(false)
+	close(a.stopCh)
+	
+	if a.context != nil {
+		if err := a.context.Close(); err != nil {
+			a.log.Error("Failed to close context storage", zap.Error(err))
+		}
+	}
+	
 	return nil
 }
 
@@ -211,7 +232,21 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 	}
 
 	personaName := a.userPersona(m.UserID)
-	content, err := chatPrompt(m.Text, userDetails, personaName)
+	
+	// Retrieve recent conversation context
+	var recentContext []ConversationContext
+	if a.context != nil {
+		recentContext, err = a.context.GetRecentContext(m.UserID, m.Channel, personaName, 10)
+		if err != nil {
+			a.log.Warn("Failed to retrieve conversation context", 
+				zap.String("user", m.UserID),
+				zap.String("channel", m.Channel),
+				zap.Error(err),
+			)
+		}
+	}
+	
+	content, err := a.chatPrompt(m.Text, userDetails, personaName, recentContext)
 	if err != nil {
 		a.log.Error("Failed to format prompt",
 			zap.String("user", m.UserID),
@@ -260,6 +295,45 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 		)
 		return
 	}
+	
+	// Store conversation context
+	if a.context != nil {
+		now := time.Now()
+		
+		// Store user message
+		userContext := ConversationContext{
+			UserID:      m.UserID,
+			ChannelID:   m.Channel,
+			PersonaName: personaName,
+			Message:     m.Text,
+			Role:        "human",
+			Timestamp:   now,
+		}
+		if err := a.context.StoreContext(userContext); err != nil {
+			a.log.Warn("Failed to store user context", 
+				zap.String("user", m.UserID),
+				zap.String("channel", m.Channel),
+				zap.Error(err),
+			)
+		}
+		
+		// Store assistant response
+		assistantContext := ConversationContext{
+			UserID:      m.UserID,
+			ChannelID:   m.Channel,
+			PersonaName: personaName,
+			Message:     completion,
+			Role:        "assistant",
+			Timestamp:   now.Add(time.Millisecond), // Ensure ordering
+		}
+		if err := a.context.StoreContext(assistantContext); err != nil {
+			a.log.Warn("Failed to store assistant context", 
+				zap.String("user", m.UserID),
+				zap.String("channel", m.Channel),
+				zap.Error(err),
+			)
+		}
+	}
 }
 
 // userPersona assigns a persona to a user and returns the persona name.
@@ -274,12 +348,27 @@ func (a *AIChat) userPersona(userID string) string {
 		delete(a.stickyPersonas, userID)
 	}
 
-	personaName := randomPersonaName()
+	personaName := a.randomPersonaName()
 	a.stickyPersonas[userID] = personaAssignment{
 		Name:      personaName,
 		Timestamp: time.Now(),
 	}
 	return personaName
+}
+
+// randomPersonaName returns a random persona name from the configured personas
+func (a *AIChat) randomPersonaName() string {
+	if len(a.config.Personas) == 0 {
+		// Fallback to default persona if no personas configured
+		return "default"
+	}
+	
+	personaNames := make([]string, 0, len(a.config.Personas))
+	for name := range a.config.Personas {
+		personaNames = append(personaNames, name)
+	}
+	
+	return random.String(personaNames)
 }
 
 type UserDetails struct {
@@ -289,10 +378,14 @@ type UserDetails struct {
 	TZ        string
 }
 
-func chatPrompt(input string, u UserDetails, personaName string) (string, error) {
-	persona := personas[personaName]
+func (a *AIChat) chatPrompt(input string, u UserDetails, personaName string, context []ConversationContext) (string, error) {
+	persona := a.config.Personas[personaName]
 	if persona == "" {
-		persona = glazerPrompt
+		// Fallback to hardcoded personas if not found in config
+		persona = personas[personaName]
+		if persona == "" {
+			persona = glazerPrompt
+		}
 	}
 	prompt := prompts.NewChatPromptTemplate([]prompts.MessageFormatter{
 		prompts.NewSystemMessagePromptTemplate(persona, nil),
@@ -312,12 +405,26 @@ func chatPrompt(input string, u UserDetails, personaName string) (string, error)
 		),
 	})
 
+	// Build conversation context prefix
+	contextPrefix := ""
+	if len(context) > 0 {
+		contextPrefix = "Recent conversation:\n"
+		for _, ctx := range context {
+			if ctx.Role == "human" {
+				contextPrefix += fmt.Sprintf("User: %s\n", ctx.Message)
+			} else {
+				contextPrefix += fmt.Sprintf("Assistant: %s\n", ctx.Message)
+			}
+		}
+		contextPrefix += "\n"
+	}
+
 	result, err := prompt.Format(map[string]any{
 		"username":  u.Username,
 		"firstName": u.FirstName,
 		"lastName":  u.LastName,
 		"timezone":  u.TZ,
-		"prefix":    "",
+		"prefix":    contextPrefix,
 		"input":     input,
 	})
 	if err != nil {
