@@ -32,9 +32,12 @@ type slackService interface {
 type FileConfig struct{}
 
 type Config struct {
-	DataDir       string
-	Personas      map[string]string
-	StickyDuration time.Duration
+	DataDir             string
+	Personas            map[string]string
+	StickyDuration      time.Duration
+	MaxContextMessages  int           // Maximum number of messages to include in context
+	MaxContextAge       time.Duration // Maximum age of messages to include in context
+	MaxContextTokens    int           // Approximate maximum tokens for context (rough estimate)
 }
 
 type personaAssignment struct {
@@ -233,7 +236,7 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 	// Retrieve recent conversation context
 	var recentContext []ConversationContext
 	if a.context != nil {
-		recentContext, err = a.context.GetRecentContext(m.UserID, m.Channel, personaName, 10)
+		recentContext, err = a.context.GetRecentContext(m.UserID, m.Channel, personaName, &a.config)
 		if err != nil {
 			a.log.Warn("Failed to retrieve conversation context", 
 				zap.String("user", m.UserID),

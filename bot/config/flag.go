@@ -67,7 +67,7 @@ func Flags() []cli.Flag {
 			Name:    "config-file",
 			Aliases: []string{"config", "c"},
 			Usage:   "Path to yaml or json file of chat responses definition.",
-			Value:   "../cmd/bot/config.yaml",
+			Value:   "./config.yaml",
 			Sources: cli.EnvVars("CONFIG_FILE"),
 			Validator: func(v string) error {
 				if v == "" {
@@ -144,7 +144,7 @@ func Flags() []cli.Flag {
 			Usage: "JSON or YAML string defining AI Chat personas as name:prompt pairs.",
 			Sources: cli.NewValueSourceChain(
 				cli.EnvVar("AI_PERSONAS_CONFIG"),
-				yaml.YAML("personas", altsrc.NewStringPtrSourcer(&configFile)),
+				yaml.YAML("aichat.personas", altsrc.NewStringPtrSourcer(&configFile)),
 			),
 		},
 		&cli.DurationFlag{
@@ -153,7 +153,34 @@ func Flags() []cli.Flag {
 			Value: 30 * time.Minute,
 			Sources: cli.NewValueSourceChain(
 				cli.EnvVar("AI_PERSONAS_STICKY_DURATION"),
-				yaml.YAML("personas_sticky_duration", altsrc.NewStringPtrSourcer(&configFile)),
+				yaml.YAML("aichat.sticky_duration", altsrc.NewStringPtrSourcer(&configFile)),
+			),
+		},
+		&cli.IntFlag{
+			Name:  "aichat-max-context-messages",
+			Usage: "Maximum number of previous messages to include in AI chat context.",
+			Value: 10,
+			Sources: cli.NewValueSourceChain(
+				cli.EnvVar("AICHAT_MAX_CONTEXT_MESSAGES"),
+				yaml.YAML("aichat.max_context_messages", altsrc.NewStringPtrSourcer(&configFile)),
+			),
+		},
+		&cli.DurationFlag{
+			Name:  "aichat-max-context-age",
+			Usage: "Maximum age of messages to include in AI chat context.",
+			Value: 24 * time.Hour,
+			Sources: cli.NewValueSourceChain(
+				cli.EnvVar("AICHAT_MAX_CONTEXT_AGE"),
+				yaml.YAML("aichat.max_context_age", altsrc.NewStringPtrSourcer(&configFile)),
+			),
+		},
+		&cli.IntFlag{
+			Name:  "aichat-max-context-tokens",
+			Usage: "Approximate maximum tokens for AI chat context (rough 4-char per token estimate).",
+			Value: 2000,
+			Sources: cli.NewValueSourceChain(
+				cli.EnvVar("AICHAT_MAX_CONTEXT_TOKENS"),
+				yaml.YAML("aichat.max_context_tokens", altsrc.NewStringPtrSourcer(&configFile)),
 			),
 		},
 		&cli.DurationFlag{

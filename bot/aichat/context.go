@@ -91,28 +91,62 @@ func (cs *ContextStorage) StoreContext(ctx ConversationContext) error {
 }
 
 // GetRecentContext retrieves recent conversation context for a user/channel/persona
-func (cs *ContextStorage) GetRecentContext(userID, channelID, personaName string, limit int) ([]ConversationContext, error) {
+func (cs *ContextStorage) GetRecentContext(userID, channelID, personaName string, config *Config) ([]ConversationContext, error) {
+	// Apply context limits from config
+	maxMessages := config.MaxContextMessages
+	if maxMessages <= 0 {
+		maxMessages = 50 // default fallback
+	}
+
+	// Calculate the minimum timestamp based on MaxContextAge
+	var minTimestamp time.Time
+	if config.MaxContextAge > 0 {
+		minTimestamp = time.Now().Add(-config.MaxContextAge)
+	}
+
 	query := `
 	SELECT user_id, channel_id, persona_name, message, role, timestamp
 	FROM conversation_context
-	WHERE user_id = ? AND channel_id = ? AND persona_name = ?
+	WHERE user_id = ? AND channel_id = ? AND persona_name = ?`
+
+	args := []interface{}{userID, channelID, personaName}
+
+	// Add timestamp filter if MaxContextAge is configured
+	if !minTimestamp.IsZero() {
+		query += ` AND timestamp >= ?`
+		args = append(args, minTimestamp)
+	}
+
+	query += `
 	ORDER BY timestamp DESC
 	LIMIT ?`
+	args = append(args, maxMessages)
 
-	rows, err := cs.db.Query(query, userID, channelID, personaName, limit)
+	rows, err := cs.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
 
 	var contexts []ConversationContext
+	totalTokens := 0
+	maxTokens := config.MaxContextTokens
+
 	for rows.Next() {
 		var ctx ConversationContext
 		err := rows.Scan(&ctx.UserID, &ctx.ChannelID, &ctx.PersonaName, &ctx.Message, &ctx.Role, &ctx.Timestamp)
 		if err != nil {
 			return nil, err
 		}
+
+		// Rough token estimation (4 characters ≈ 1 token)
+		messageTokens := len(ctx.Message) / 4
+		if maxTokens > 0 && totalTokens+messageTokens > maxTokens {
+			break // Stop adding messages if we exceed token limit
+		}
+
 		contexts = append(contexts, ctx)
+		totalTokens += messageTokens
 	}
 
 	// Reverse the slice to get chronological order (oldest first)

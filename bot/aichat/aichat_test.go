@@ -51,7 +51,13 @@ func TestContextStorage_StoreAndRetrieve(t *testing.T) {
 	}
 	
 	// Retrieve the context
-	contexts, err := storage.GetRecentContext("U123", "C456", "test", 10)
+	// Create a test config with reasonable defaults
+	testConfig := &Config{
+		MaxContextMessages: 10,
+		MaxContextAge:      24 * time.Hour,
+		MaxContextTokens:   1000,
+	}
+	contexts, err := storage.GetRecentContext("U123", "C456", "test", testConfig)
 	if err != nil {
 		t.Fatalf("Failed to retrieve context: %v", err)
 	}

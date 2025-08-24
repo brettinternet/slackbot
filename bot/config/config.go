@@ -109,8 +109,12 @@ type configOpts struct {
 	SlackEventsPath    string
 	ConfigFile         string
 	// AI Chat Personas Configuration
-	PersonasConfig       string
+	PersonasConfig         string
 	PersonasStickyDuration time.Duration
+	// AI Chat Context Limits
+	AIChatMaxContextMessages int
+	AIChatMaxContextAge      time.Duration
+	AIChatMaxContextTokens   int
 	// Vibecheck ban duration
 	VibecheckBanDuration time.Duration
 }
@@ -142,21 +146,29 @@ func newConfig(opts configOpts) (Config, error) {
 	// Parse personas configuration
 	personas := make(map[string]string)
 	if opts.PersonasConfig != "" {
-		// Try parsing as YAML first, then JSON
-		var personasData map[string]interface{}
-		err := yaml.Unmarshal([]byte(opts.PersonasConfig), &personasData)
-		if err != nil {
-			// If YAML fails, try JSON
-			err = json.Unmarshal([]byte(opts.PersonasConfig), &personasData)
+		// Check if we received a Go map string representation (from CLI YAML parsing)
+		if strings.HasPrefix(opts.PersonasConfig, "map[") {
+			// The CLI library already parsed the YAML and gave us a string representation
+			// This mainly happens during testing. In production, personas are typically
+			// provided via environment variables as JSON or YAML strings.
+			personas = make(map[string]string)
+		} else {
+			// Try parsing as YAML first, then JSON
+			var personasData map[string]interface{}
+			err := yaml.Unmarshal([]byte(opts.PersonasConfig), &personasData)
 			if err != nil {
-				return Config{}, fmt.Errorf("failed to parse personas config: %w", err)
+				// If YAML fails, try JSON
+				err = json.Unmarshal([]byte(opts.PersonasConfig), &personasData)
+				if err != nil {
+					return Config{}, fmt.Errorf("failed to parse personas config: %w", err)
+				}
 			}
-		}
-		
-		// Convert to string map
-		for name, prompt := range personasData {
-			if promptStr, ok := prompt.(string); ok {
-				personas[name] = promptStr
+			
+			// Convert to string map
+			for name, prompt := range personasData {
+				if promptStr, ok := prompt.(string); ok {
+					personas[name] = promptStr
+				}
 			}
 		}
 	}
@@ -194,9 +206,12 @@ func newConfig(opts configOpts) (Config, error) {
 			OpenAIAPIKey: opts.OpenAIAPIKey,
 		},
 		AIChat: aichat.Config{
-			DataDir:        dataDir,
-			Personas:       personas,
-			StickyDuration: opts.PersonasStickyDuration,
+			DataDir:             dataDir,
+			Personas:            personas,
+			StickyDuration:      opts.PersonasStickyDuration,
+			MaxContextMessages:  opts.AIChatMaxContextMessages,
+			MaxContextAge:       opts.AIChatMaxContextAge,
+			MaxContextTokens:    opts.AIChatMaxContextTokens,
 		},
 	}, nil
 }

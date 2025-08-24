@@ -101,7 +101,7 @@ func TestBuildOpts_MakeConfig(t *testing.T) {
 			&cli.StringSliceFlag{Name: "slack-preferred-channels", Value: []string{"channel1"}},
 			&cli.StringFlag{Name: "slack-user-notify-channel", Value: "user-notify-channel"},
 			&cli.StringFlag{Name: "slack-events-path", Value: "/custom/events"},
-			&cli.StringFlag{Name: "config-file", Value: "../cmd/bot/config.yaml"},
+			&cli.StringFlag{Name: "config-file", Value: "./config.yaml"},
 		},
 	}
 
@@ -285,7 +285,7 @@ func TestNewConfig(t *testing.T) {
 		PreferredChannels:  []string{"channel1"},
 		UserNotifyChannel:    "user-notify",
 		SlackEventsPath:      "/events",
-		ConfigFile:           "../cmd/bot/config.yaml",
+		ConfigFile:           "./config.yaml",
 		VibecheckBanDuration: 10 * time.Minute,
 	}
 
