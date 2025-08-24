@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -32,6 +33,7 @@ type Server struct {
 	isReady              atomic.Bool
 	slack                slackService
 	slackEventProcessors []slackEventProcessor
+	serverMu             sync.RWMutex // Protects server field
 }
 
 func NewServer(log *zap.Logger, config Config, slack slackService) *Server {
@@ -52,7 +54,8 @@ func (h *Server) Run(ctx context.Context) error {
 		port = DefaultServerPort
 	}
 	addr := fmt.Sprintf(":%d", port)
-	h.server = &http.Server{
+	
+	server := &http.Server{
 		Addr:              addr,
 		Handler:           h.serveMux,
 		ReadHeaderTimeout: time.Second * 10,
@@ -63,6 +66,10 @@ func (h *Server) Run(ctx context.Context) error {
 			return ctx
 		},
 	}
+	
+	h.serverMu.Lock()
+	h.server = server
+	h.serverMu.Unlock()
 
 	// Set the service as ready after a short delay
 	go func() {
@@ -72,7 +79,7 @@ func (h *Server) Run(ctx context.Context) error {
 	}()
 
 	h.log.Info("Starting http server", zap.String("addr", addr))
-	if err := h.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return err
 	}
 	return nil
@@ -84,10 +91,14 @@ func (h *Server) BeginShutdown(ctx context.Context) error {
 }
 
 func (h *Server) Shutdown(ctx context.Context) error {
-	if h.server == nil {
+	h.serverMu.RLock()
+	server := h.server
+	h.serverMu.RUnlock()
+	
+	if server == nil {
 		return nil
 	}
-	return h.server.Shutdown(ctx)
+	return server.Shutdown(ctx)
 }
 
 func (h *Server) registerHealthEndpoints() {
