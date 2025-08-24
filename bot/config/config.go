@@ -71,18 +71,18 @@ func (l BuildOpts) MakeConfig(cmd *cli.Command) (Config, error) {
 		environment = EnvironmentProduction.String()
 	}
 	opts := configOpts{
-		Version:              l.BuildVersion,
-		BuildTime:            l.BuildTime,
-		LogLevel:             cmd.String("log-level"),
-		Environment:          environment,
-		DataDir:              cmd.String("data-dir"),
-		ServerPort:           cmd.Uint32("server-port"),
-		SlackToken:           cmd.String("slack-token"),
-		SlackSigningSecret:   cmd.String("slack-signing-secret"),
-		OpenAIAPIKey:         cmd.String("openai-api-key"),
-		PreferredUsers:       cmd.StringSlice("slack-preferred-user"),
-		PreferredChannels:    cmd.StringSlice("slack-preferred-channels"),
-		UserNotifyChannel:    cmd.String("slack-user-notify-channel"),
+		Version:                l.BuildVersion,
+		BuildTime:              l.BuildTime,
+		LogLevel:               cmd.String("log-level"),
+		Environment:            environment,
+		DataDir:                cmd.String("data-dir"),
+		ServerPort:             cmd.Uint32("server-port"),
+		SlackToken:             cmd.String("slack-token"),
+		SlackSigningSecret:     cmd.String("slack-signing-secret"),
+		OpenAIAPIKey:           cmd.String("openai-api-key"),
+		PreferredUsers:         cmd.StringSlice("slack-preferred-user"),
+		PreferredChannels:      cmd.StringSlice("slack-preferred-channels"),
+		UserNotifyChannel:      cmd.String("slack-user-notify-channel"),
 		SlackEventsPath:        cmd.String("slack-events-path"),
 		ConfigFile:             cmd.String("config-file"),
 		PersonasConfig:         cmd.String("personas-config"),
@@ -145,28 +145,20 @@ func newConfig(opts configOpts) (Config, error) {
 		dataDir, _ = relativeToAbsolutePath(dataDir)
 	}
 
-	// Parse personas configuration
 	personas := make(map[string]string)
 	if opts.PersonasConfig != "" {
-		// Check if we received a Go map string representation (from CLI YAML parsing)
 		if strings.HasPrefix(opts.PersonasConfig, "map[") {
-			// The CLI library already parsed the YAML and gave us a string representation
-			// This mainly happens during testing. In production, personas are typically
-			// provided via environment variables as JSON or YAML strings.
-			personas = make(map[string]string)
+			personas = parseGoMapString(opts.PersonasConfig)
 		} else {
-			// Try parsing as YAML first, then JSON
 			var personasData map[string]interface{}
 			err := yaml.Unmarshal([]byte(opts.PersonasConfig), &personasData)
 			if err != nil {
-				// If YAML fails, try JSON
 				err = json.Unmarshal([]byte(opts.PersonasConfig), &personasData)
 				if err != nil {
 					return Config{}, fmt.Errorf("failed to parse personas config: %w", err)
 				}
 			}
-			
-			// Convert to string map
+
 			for name, prompt := range personasData {
 				if promptStr, ok := prompt.(string); ok {
 					personas[name] = promptStr
@@ -209,12 +201,12 @@ func newConfig(opts configOpts) (Config, error) {
 			OpenAIAPIKey: opts.OpenAIAPIKey,
 		},
 		AIChat: aichat.Config{
-			DataDir:             dataDir,
-			Personas:            personas,
-			StickyDuration:      opts.PersonasStickyDuration,
-			MaxContextMessages:  opts.AIChatMaxContextMessages,
-			MaxContextAge:       opts.AIChatMaxContextAge,
-			MaxContextTokens:    opts.AIChatMaxContextTokens,
+			DataDir:            dataDir,
+			Personas:           personas,
+			StickyDuration:     opts.PersonasStickyDuration,
+			MaxContextMessages: opts.AIChatMaxContextMessages,
+			MaxContextAge:      opts.AIChatMaxContextAge,
+			MaxContextTokens:   opts.AIChatMaxContextTokens,
 		},
 	}, nil
 }
@@ -249,4 +241,57 @@ func Default[T comparable](val T, defaultVal T) T {
 		return defaultVal
 	}
 	return val
+}
+
+// parseGoMapString parses a Go map string representation like "map[key1:value1 key2:value2]"
+func parseGoMapString(mapStr string) map[string]string {
+	personas := make(map[string]string)
+	if !strings.HasPrefix(mapStr, "map[") {
+		return personas
+	}
+
+	content := mapStr[4 : len(mapStr)-1] // Remove "map[" and "]"
+	if content == "" {
+		return personas
+	}
+
+	remaining := strings.TrimSpace(content)
+	for len(remaining) > 0 {
+		colonIndex := strings.Index(remaining, ":")
+		if colonIndex == -1 {
+			break
+		}
+
+		key := remaining[:colonIndex]
+		remaining = remaining[colonIndex+1:]
+
+		// Find where the next key starts by looking for " keyname:" pattern
+		nextKeyStart := -1
+		for i := 1; i < len(remaining); i++ {
+			if remaining[i] == ' ' && i+1 < len(remaining) {
+				nextPart := remaining[i+1:]
+				nextColonIndex := strings.Index(nextPart, ":")
+				if nextColonIndex > 0 {
+					potentialKey := nextPart[:nextColonIndex]
+					if !strings.Contains(potentialKey, " ") {
+						nextKeyStart = i
+						break
+					}
+				}
+			}
+		}
+
+		var value string
+		if nextKeyStart == -1 {
+			value = remaining
+			remaining = ""
+		} else {
+			value = remaining[:nextKeyStart]
+			remaining = strings.TrimSpace(remaining[nextKeyStart:])
+		}
+
+		personas[key] = value
+	}
+
+	return personas
 }

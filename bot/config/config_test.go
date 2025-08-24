@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -349,6 +350,170 @@ func TestNewConfig_EmptyDataDir(t *testing.T) {
 	}
 }
 
+
+func TestNewConfig_PersonasFromYAML(t *testing.T) {
+	// Test parsing personas from YAML config (as would come from file)
+	yamlPersonasConfig := `
+office_comedian: |
+  You're the office comedian who turns every conversation into a stand-up routine.
+  You love workplace puns, dad jokes, and making light of corporate life.
+
+grumpy_mentor: |
+  You're a seasoned developer who's been around since the dawn of computing.
+  You've seen every trend come and go and aren't impressed by the latest JavaScript framework.
+`
+
+	opts := configOpts{
+		Version:        "1.0.0",
+		BuildTime:      "2023-01-01", 
+		Environment:    "development",
+		DataDir:        "./tmp",
+		PersonasConfig: yamlPersonasConfig,
+	}
+
+	config, err := newConfig(opts)
+	if err != nil {
+		t.Fatalf("newConfig() with YAML personas error = %v", err)
+	}
+
+	// Test that personas were parsed correctly
+	expectedPersonas := map[string]string{
+		"office_comedian": "You're the office comedian who turns every conversation into a stand-up routine.\nYou love workplace puns, dad jokes, and making light of corporate life.\n",
+		"grumpy_mentor":   "You're a seasoned developer who's been around since the dawn of computing.\nYou've seen every trend come and go and aren't impressed by the latest JavaScript framework.\n",
+	}
+
+	if len(config.AIChat.Personas) != len(expectedPersonas) {
+		t.Errorf("newConfig() parsed %d personas, want %d", len(config.AIChat.Personas), len(expectedPersonas))
+	}
+
+	for name, expectedPrompt := range expectedPersonas {
+		if actualPrompt, exists := config.AIChat.Personas[name]; !exists {
+			t.Errorf("newConfig() missing persona %q", name)
+		} else if actualPrompt != expectedPrompt {
+			t.Errorf("newConfig() persona %q = %q, want %q", name, actualPrompt, expectedPrompt)
+		}
+	}
+}
+
+func TestNewConfig_PersonasFromJSON(t *testing.T) {
+	// Test parsing personas from JSON config
+	jsonPersonasConfig := `{
+  "office_comedian": "You're the office comedian who turns every conversation into a stand-up routine.",
+  "grumpy_mentor": "You're a seasoned developer who's been around since the dawn of computing."
+}`
+
+	opts := configOpts{
+		Version:        "1.0.0",
+		BuildTime:      "2023-01-01",
+		Environment:    "development", 
+		DataDir:        "./tmp",
+		PersonasConfig: jsonPersonasConfig,
+	}
+
+	config, err := newConfig(opts)
+	if err != nil {
+		t.Fatalf("newConfig() with JSON personas error = %v", err)
+	}
+
+	// Test that personas were parsed correctly
+	expectedPersonas := map[string]string{
+		"office_comedian": "You're the office comedian who turns every conversation into a stand-up routine.",
+		"grumpy_mentor":   "You're a seasoned developer who's been around since the dawn of computing.",
+	}
+
+	if len(config.AIChat.Personas) != len(expectedPersonas) {
+		t.Errorf("newConfig() parsed %d personas, want %d", len(config.AIChat.Personas), len(expectedPersonas))
+	}
+
+	for name, expectedPrompt := range expectedPersonas {
+		if actualPrompt, exists := config.AIChat.Personas[name]; !exists {
+			t.Errorf("newConfig() missing persona %q", name)
+		} else if actualPrompt != expectedPrompt {
+			t.Errorf("newConfig() persona %q = %q, want %q", name, actualPrompt, expectedPrompt)
+		}
+	}
+}
+
+func TestNewConfig_InvalidPersonasConfig(t *testing.T) {
+	// Test that invalid personas config returns an error
+	opts := configOpts{
+		Version:        "1.0.0",
+		BuildTime:      "2023-01-01",
+		Environment:    "development",
+		DataDir:        "./tmp", 
+		PersonasConfig: "invalid yaml: [broken", // Invalid YAML and JSON
+	}
+
+	_, err := newConfig(opts)
+	if err == nil {
+		t.Error("newConfig() with invalid personas config should return error")
+	}
+
+	if !strings.Contains(err.Error(), "failed to parse personas config") {
+		t.Errorf("newConfig() error = %v, should contain 'failed to parse personas config'", err)
+	}
+}
+
+func TestNewConfig_EmptyPersonasConfig(t *testing.T) {
+	// Test that empty personas config results in empty personas map
+	opts := configOpts{
+		Version:        "1.0.0",
+		BuildTime:      "2023-01-01",
+		Environment:    "development",
+		DataDir:        "./tmp",
+		PersonasConfig: "", // Empty personas
+	}
+
+	config, err := newConfig(opts)
+	if err != nil {
+		t.Fatalf("newConfig() with empty personas error = %v", err)
+	}
+
+	if len(config.AIChat.Personas) != 0 {
+		t.Errorf("newConfig() with empty personas config should have 0 personas, got %d", len(config.AIChat.Personas))
+	}
+}
+
+func TestNewConfig_PersonasFromGoMapString(t *testing.T) {
+	// Test parsing personas from Go map string representation (as comes from YAML file parsing)
+	// This is what happens when the CLI library parses YAML file config
+	goMapPersonasConfig := `map[office_comedian:You're the office comedian who turns every conversation into a stand-up routine. grumpy_mentor:You're a seasoned developer who's been around since the dawn of computing.]`
+
+	opts := configOpts{
+		Version:        "1.0.0",
+		BuildTime:      "2023-01-01",
+		Environment:    "development",
+		DataDir:        "./tmp",
+		PersonasConfig: goMapPersonasConfig,
+	}
+
+	config, err := newConfig(opts)
+	if err != nil {
+		t.Fatalf("newConfig() with Go map string personas error = %v", err)
+	}
+
+	// This currently fails because the Go map string parsing is not implemented
+	// The expectation is that it should extract personas from the map string
+	expectedPersonas := map[string]string{
+		"office_comedian": "You're the office comedian who turns every conversation into a stand-up routine.",
+		"grumpy_mentor":   "You're a seasoned developer who's been around since the dawn of computing.",
+	}
+
+	if len(config.AIChat.Personas) == 0 {
+		t.Error("newConfig() should parse personas from Go map string representation but got empty map")
+		t.Logf("PersonasConfig input: %s", goMapPersonasConfig)
+		t.Logf("Parsed personas: %v", config.AIChat.Personas)
+		return
+	}
+
+	for name, expectedPrompt := range expectedPersonas {
+		if actualPrompt, exists := config.AIChat.Personas[name]; !exists {
+			t.Errorf("newConfig() missing persona %q from Go map string", name)
+		} else if actualPrompt != expectedPrompt {
+			t.Errorf("newConfig() persona %q = %q, want %q", name, actualPrompt, expectedPrompt)
+		}
+	}
+}
 
 func BenchmarkEnvironmentFromString(b *testing.B) {
 	envs := []string{"development", "production", "invalid"}
