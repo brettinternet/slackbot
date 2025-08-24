@@ -56,7 +56,7 @@ tasks:
 
   test:
     desc: Run tests
-    cmd: go test -v ./...
+    cmd: gotestsum --format testname --hide-summary=output
 
   clean:
     desc: Clean build artifacts
@@ -71,7 +71,7 @@ tasks:
         -X main.buildVersion=$BUILD_VERSION
         -X main.buildTime=$BUILD_DATE
         -X main.buildEnvironment=production
-    cmds: ['go build -ldflags "{{.LDFLAGS}}" -o ./build/bot ./main.go']
+    cmd: go build -ldflags "{{.LDFLAGS}}" -o ./build/bot ./main.go
 
   build:docker:
     desc: Build
