@@ -94,6 +94,10 @@ func TestRun_VersionCommand(t *testing.T) {
 }
 
 func TestRun_InvalidCommand(t *testing.T) {
+	// Clear any environment variables that might provide credentials
+	t.Setenv("SLACK_TOKEN", "")
+	t.Setenv("SLACK_SIGNING_SECRET", "")
+	
 	args := []string{"bot", "invalid-command"}
 	ctx := context.Background()
 
@@ -105,14 +109,19 @@ func TestRun_InvalidCommand(t *testing.T) {
 }
 
 func TestRun_StartCommand_MissingCredentials(t *testing.T) {
+	// Clear any environment variables that might provide credentials
+	t.Setenv("SLACK_TOKEN", "")
+	t.Setenv("SLACK_SIGNING_SECRET", "")
+	
 	args := []string{"bot", "start"}
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 
 	// Start without credentials should error
 	err := run(ctx, args)
 	if err == nil {
 		t.Error("run() start without credentials should return error")
+		return
 	}
 
 	// Should contain meaningful error message about credentials

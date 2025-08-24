@@ -58,34 +58,36 @@ func run(rootCtx context.Context, args []string) error {
 	}()
 
 	log := b.Logger()
+	log.Info("Server started.")
 	select {
 	case <-rootCtx.Done():
-		stop()
-		_ = b.BeginShutdown(runCtx)
-		_ = sleepContext(runCtx, terminationDrainPeriod) // Give time for readiness check to propagate
-
-		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), terminationGracePeriod)
-		defer shutdownCancel()
-		log.Info("Shutting down.")
-		err := b.Shutdown(shutdownCtx)
-		runCancel()
-		if err != nil {
-			log.Error("Error during bot shutdown.", zap.Error(err))
-			_ = sleepContext(shutdownCtx, terminationHardPeriod) // Give time for shutdown to complete
-		}
-
-		if err := b.ForceShutdown(shutdownCtx); err != nil {
-			log.Error("Error during bot force shutdown.", zap.Error(err))
-		}
 	case err := <-svcErr:
 		if err != nil {
-			log.Error("Error during bot startup.", zap.Error(err))
+			log.Error("Error during server startup.", zap.Error(err))
 		}
-		err = b.Shutdown(rootCtx)
-		runCancel()
-		if err != nil {
-			log.Error("Error during bot shutdown.", zap.Error(err))
+	}
+	stop()
+	log.Info("Received shutdown signal, beginning graceful shutdown.")
+	if err := b.BeginShutdown(runCtx); err != nil {
+		log.Error("Error during begin shutdown.", zap.Error(err))
+	}
+	if err := sleepContext(runCtx, terminationDrainPeriod); err != nil { // Give time for readiness check to propagate
+		log.Error("Error during drain wait.", zap.Error(err))
+	}
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), terminationGracePeriod)
+	defer shutdownCancel()
+	log.Info("Shutting down.")
+	err := b.Shutdown(shutdownCtx)
+	runCancel()
+	if err != nil {
+		log.Error("Error during server shutdown.", zap.Error(err))
+		if err := sleepContext(shutdownCtx, terminationHardPeriod); err != nil { // Give time for shutdown to complete
+			log.Error("Error during shutdown wait.", zap.Error(err))
 		}
+	}
+	log.Info("Force shutting down server if still running.")
+	if err := b.ForceShutdown(shutdownCtx); err != nil {
+		log.Error("Error during server force shutdown.", zap.Error(err))
 	}
 	log.Info("Shutdown complete.")
 	return nil
