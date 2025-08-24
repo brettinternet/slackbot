@@ -105,7 +105,8 @@ func TestChat_SetConfig(t *testing.T) {
 	mockSlack := &mockSlackService{}
 	chat := NewChat(logger, config, mockSlack)
 
-	newConfig := FileConfig{
+	newConfig := Config{
+		PreferredUsers: []string{"user1"},
 		Responses: []Response{
 			{
 				Pattern:  "hello",
@@ -120,12 +121,12 @@ func TestChat_SetConfig(t *testing.T) {
 		t.Errorf("SetConfig() error = %v, want nil", err)
 	}
 
-	if len(chat.fileConfig.Responses) != 1 {
-		t.Errorf("SetConfig() responses length = %v, want 1", len(chat.fileConfig.Responses))
+	if len(chat.config.Responses) != 1 {
+		t.Errorf("SetConfig() responses length = %v, want 1", len(chat.config.Responses))
 	}
 
-	if chat.fileConfig.Responses[0].Pattern != "hello" {
-		t.Errorf("SetConfig() response pattern = %v, want 'hello'", chat.fileConfig.Responses[0].Pattern)
+	if chat.config.Responses[0].Pattern != "hello" {
+		t.Errorf("SetConfig() response pattern = %v, want 'hello'", chat.config.Responses[0].Pattern)
 	}
 }
 
@@ -136,13 +137,11 @@ func TestChat_ProcessSlackEvent_AppMention(t *testing.T) {
 	chat := NewChat(logger, config, mockSlack)
 
 	// Set up a simple response
-	chat.fileConfig = FileConfig{
-		Responses: []Response{
-			{
-				Pattern:  "hello",
-				Message:  "Hi there!",
-				IsRegexp: false,
-			},
+	chat.config.Responses = []Response{
+		{
+			Pattern:  "hello",
+			Message:  "Hi there!",
+			IsRegexp: false,
 		},
 	}
 

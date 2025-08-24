@@ -23,6 +23,14 @@ var (
 	terminationHardPeriod  = 3 * time.Second
 )
 
+func init() {
+	if buildEnvironment != config.EnvironmentProduction.String() {
+		terminationGracePeriod = 4 * time.Second
+		terminationDrainPeriod = 1 * time.Second
+		terminationHardPeriod = 1 * time.Second
+	}
+}
+
 func main() {
 	if err := run(context.Background(), os.Args); err != nil {
 		panic(err)

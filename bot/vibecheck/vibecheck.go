@@ -24,10 +24,11 @@ type slackService interface {
 }
 
 type FileConfig struct {
-	GoodReactions []string `json:"good_reactions" yaml:"good_reactions"`
-	GoodText      []string `json:"good_text" yaml:"good_text"`
-	BadReactions  []string `json:"bad_reactions" yaml:"bad_reactions"`
-	BadText       []string `json:"bad_text" yaml:"bad_text"`
+	GoodReactions []string       `json:"good_reactions" yaml:"good_reactions"`
+	GoodText      []string       `json:"good_text" yaml:"good_text"`
+	BadReactions  []string       `json:"bad_reactions" yaml:"bad_reactions"`
+	BadText       []string       `json:"bad_text" yaml:"bad_text"`
+	BanDuration   *time.Duration `json:"ban_duration" yaml:"ban_duration"`
 }
 
 type Config struct {

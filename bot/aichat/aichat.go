@@ -29,7 +29,13 @@ type slackService interface {
 	Client() *slack.Client
 }
 
-type FileConfig struct{}
+type FileConfig struct {
+	StickyDuration      *time.Duration     `json:"sticky_duration" yaml:"sticky_duration"`
+	MaxContextMessages  *int              `json:"max_context_messages" yaml:"max_context_messages"`
+	MaxContextAge       *time.Duration    `json:"max_context_age" yaml:"max_context_age"`
+	MaxContextTokens    *int              `json:"max_context_tokens" yaml:"max_context_tokens"`
+	Personas           map[string]string `json:"personas" yaml:"personas"`
+}
 
 type Config struct {
 	DataDir             string

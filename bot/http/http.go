@@ -53,12 +53,12 @@ func (h *Server) Run(ctx context.Context) error {
 	}
 	addr := fmt.Sprintf(":%d", port)
 	h.server = &http.Server{
-		Addr:               addr,
-		Handler:            h.serveMux,
-		ReadHeaderTimeout:  time.Second * 10,
-		ReadTimeout:        time.Second * 30,
-		WriteTimeout:       time.Second * 30,
-		IdleTimeout:        time.Second * 120,
+		Addr:              addr,
+		Handler:           h.serveMux,
+		ReadHeaderTimeout: time.Second * 10,
+		ReadTimeout:       time.Second * 30,
+		WriteTimeout:      time.Second * 30,
+		IdleTimeout:       time.Second * 120,
 		BaseContext: func(_ net.Listener) context.Context {
 			return ctx
 		},

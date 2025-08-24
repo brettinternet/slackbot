@@ -18,11 +18,13 @@ import (
 	"go.uber.org/zap"
 	"slackbot.arpa/bot/aichat"
 	"slackbot.arpa/bot/chat"
+	"slackbot.arpa/bot/user"
 	"slackbot.arpa/bot/vibecheck"
 )
 
 // FileConfig represents the entire configuration file structure
 type FileConfig struct {
+	User      user.FileConfig      `json:"user" yaml:"user"`
 	Chat      chat.FileConfig      `json:"chat" yaml:"chat"`
 	Vibecheck vibecheck.FileConfig `json:"vibecheck" yaml:"vibecheck"`
 	AIChat    aichat.FileConfig    `json:"aichat" yaml:"aichat"`

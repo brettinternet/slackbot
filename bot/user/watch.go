@@ -35,6 +35,10 @@ type Config struct {
 	DataDir       string
 }
 
+type FileConfig struct {
+	NotifyChannel *string `json:"notify_channel" yaml:"notify_channel"`
+}
+
 type UserWatch struct {
 	log           *zap.Logger
 	slack         slackService

@@ -23,13 +23,12 @@ type Bot struct {
 	BuildOpts     config.BuildOpts
 	logger        logger.Logger
 	log           *zap.Logger
-	config        config.Config
+	configManager config.ConfigProvider
 	http          *http.Server
 	slack         *slack.Slack
 	userWatch     *user.UserWatch
 	chat          *chat.Chat
 	vibecheck     *vibecheck.Vibecheck
-	configWatcher *config.ConfigWatcher
 	ai            *ai.AI
 	aichat        *aichat.AIChat
 }
@@ -42,44 +41,160 @@ func NewBot(buildOpts config.BuildOpts) *Bot {
 
 func (s *Bot) Setup(ctx context.Context, cmd *cli.Command) (context.Context, error) {
 	var err error
-	s.config, err = s.BuildOpts.MakeConfig(cmd)
-	if err != nil {
-		return ctx, fmt.Errorf("config setup: %w", err)
+	cliOverrides := config.ExtractCLIOverrides(cmd)
+
+	configPath := "./config.yaml"
+	if cliOverrides.ConfigFile != nil {
+		configPath = *cliOverrides.ConfigFile
 	}
 
-	isProd := s.config.Environment == config.EnvironmentProduction
+	logLevel := "info"
+	if cliOverrides.LogLevel != nil {
+		logLevel = *cliOverrides.LogLevel
+	}
+
+	isProd := s.BuildOpts.BuildEnvironment == "production"
+	if cliOverrides.Environment != nil {
+		isProd = *cliOverrides.Environment == "production"
+	}
+
 	s.logger, err = logger.NewLogger(logger.LoggerOpts{
-		Level:        s.config.LogLevel,
+		Level:        logLevel,
 		IsProduction: isProd,
 		JSONConsole:  isProd,
 	})
 	if err != nil {
 		return ctx, fmt.Errorf("logger setup: %w", err)
 	}
-
 	s.log = s.logger.Get()
 
-	// Initialize config configWatcher if config file is specified
-	if s.config.ConfigFile != "" {
-		s.configWatcher, err = config.NewConfigWatcher(s.log, s.config.ConfigFile)
-		if err != nil {
-			return ctx, fmt.Errorf("config configWatcher setup: %w", err)
-		}
+	s.configManager, err = config.NewConfigManager(s.log, s.BuildOpts, cliOverrides, configPath)
+	if err != nil {
+		return ctx, fmt.Errorf("config manager setup: %w", err)
 	}
 
-	s.slack = slack.NewSlack(s.log, s.config.Slack)
+	currentConfig := s.configManager.GetConfig()
+	if currentConfig == nil {
+		return ctx, fmt.Errorf("failed to get initial configuration")
+	}
 
+	s.logger, err = logger.NewLogger(logger.LoggerOpts{
+		Level:        currentConfig.LogLevel,
+		IsProduction: currentConfig.Environment == config.EnvironmentProduction,
+		JSONConsole:  currentConfig.Environment == config.EnvironmentProduction,
+	})
+	if err != nil {
+		return ctx, fmt.Errorf("logger setup: %w", err)
+	}
+	s.log = s.logger.Get()
+
+	// Initialize services with live config
+	s.slack = slack.NewSlack(s.log, s.configManager.GetSlackConfig())
 	if err := s.slack.Setup(ctx); err != nil {
 		return ctx, fmt.Errorf("setup slack service: %w", err)
 	}
 
-	s.userWatch = user.NewUserWatch(s.log, s.config.User, s.slack)
-	s.chat = chat.NewChat(s.log, s.config.Chat, s.slack)
-	s.vibecheck = vibecheck.NewVibecheck(s.log, s.config.Vibecheck, s.slack)
-	s.ai = ai.NewAI(s.log, s.config.AI)
-	s.aichat = aichat.NewAIChat(s.log, s.config.AIChat, s.slack, s.ai)
-	s.http = http.NewServer(s.log, s.config.Server, s.slack)
+	s.userWatch = user.NewUserWatch(s.log, s.configManager.GetUserConfig(), s.slack)
+
+	// Initialize services conditionally based on their configuration
+	s.initializeServices(ctx, currentConfig)
+
+	s.http = http.NewServer(s.log, s.configManager.GetHTTPConfig(), s.slack)
+
+	// Subscribe to config changes for dynamic service reconfiguration
+	s.configManager.Subscribe(s.onConfigChange)
+
 	return ctx, nil
+}
+
+// initializeServices conditionally initializes services based on configuration
+func (s *Bot) initializeServices(ctx context.Context, currentConfig *config.Config) {
+	// Only initialize chat service if there are chat responses configured
+	fileConfig := s.configManager.GetConfig()
+	var chatResponses int
+	if fileConfig != nil {
+		// Load current file config to check responses
+		var fc config.FileConfig
+		if currentConfig.ConfigFile != "" {
+			if err := config.ReadConfig(currentConfig.ConfigFile, &fc); err == nil {
+				chatResponses = len(fc.Chat.Responses)
+			}
+		}
+	}
+
+	if chatResponses > 0 {
+		s.chat = chat.NewChat(s.log, s.configManager.GetChatConfig(), s.slack)
+		s.log.Info("Chat service initialized", zap.Int("responses", chatResponses))
+	} else {
+		s.log.Info("Chat service disabled - no responses configured")
+	}
+
+	// Only initialize vibecheck service if there are reactions configured
+	var hasReactions bool
+	if fileConfig != nil {
+		var fc config.FileConfig
+		if currentConfig.ConfigFile != "" {
+			if err := config.ReadConfig(currentConfig.ConfigFile, &fc); err == nil {
+				hasReactions = len(fc.Vibecheck.GoodReactions) > 0 || len(fc.Vibecheck.BadReactions) > 0
+			}
+		}
+	}
+
+	if hasReactions {
+		s.vibecheck = vibecheck.NewVibecheck(s.log, s.configManager.GetVibecheckConfig(), s.slack)
+		s.log.Info("Vibecheck service initialized")
+	} else {
+		s.log.Info("Vibecheck service disabled - no reactions configured")
+	}
+
+	// Only initialize AI services if OpenAI API key is provided
+	aiConfig := s.configManager.GetAIConfig()
+	if aiConfig.OpenAIAPIKey != "" {
+		s.ai = ai.NewAI(s.log, aiConfig)
+
+		// Only initialize aichat service if there are personas configured
+		aichatConfig := s.configManager.GetAIChatConfig()
+		if len(aichatConfig.Personas) > 0 {
+			s.aichat = aichat.NewAIChat(s.log, aichatConfig, s.slack, s.ai)
+			s.log.Info("AI Chat service initialized", zap.Int("personas", len(aichatConfig.Personas)))
+		} else {
+			s.log.Info("AI Chat service disabled - no personas configured")
+		}
+	} else {
+		s.log.Info("AI services disabled - no OpenAI API key provided")
+	}
+}
+
+// onConfigChange handles configuration changes and reconfigures services
+func (s *Bot) onConfigChange(newConfig *config.Config) {
+	s.log.Info("Configuration changed, updating services")
+
+	// Update logger if log level changed
+	if s.log != nil {
+		newLogger, err := logger.NewLogger(logger.LoggerOpts{
+			Level:        newConfig.LogLevel,
+			IsProduction: newConfig.Environment == config.EnvironmentProduction,
+			JSONConsole:  newConfig.Environment == config.EnvironmentProduction,
+		})
+		if err != nil {
+			s.log.Error("Failed to update logger with new config", zap.Error(err))
+		} else {
+			s.logger = newLogger
+			s.log = s.logger.Get()
+			s.log.Info("Logger updated with new configuration")
+		}
+	}
+
+	// Note: Services will use the updated config from ConfigManager automatically
+	// Some services may need to be reinitialized for certain config changes
+
+	// Note: AI services may need restart for some changes (like API keys)
+	// For now, we'll just log the change
+	if s.ai != nil || s.aichat != nil {
+		s.log.Info("AI service configuration changed - may require restart for some changes")
+	}
+
+	s.log.Info("Service configuration update completed")
 }
 
 func (s *Bot) Run(runCtx context.Context) error {
@@ -87,28 +202,7 @@ func (s *Bot) Run(runCtx context.Context) error {
 		return fmt.Errorf("start slack service: %w", err)
 	}
 
-	// Start the config configWatcher if we have one
-	if s.configWatcher != nil {
-		// Set up callbacks for each module that needs to reload config
-		if s.chat != nil {
-			s.configWatcher.AddCallback("chat", func(c config.FileConfig) {
-				s.log.Info("Updating chat configuration")
-				_ = s.chat.SetConfig(c.Chat)
-			})
-		}
-
-		if s.vibecheck != nil {
-			s.configWatcher.AddCallback("vibecheck", func(c config.FileConfig) {
-				s.log.Info("Updating vibecheck configuration")
-				_ = s.vibecheck.SetConfig(c.Vibecheck)
-			})
-		}
-
-		// Start the configWatcher
-		if err := s.configWatcher.Start(runCtx); err != nil {
-			return fmt.Errorf("start config configWatcher: %w", err)
-		}
-	}
+	// ConfigManager is already running and providing live config updates
 
 	if s.chat != nil && s.http != nil {
 		s.http.RegisterEventProcessor(s.chat)
@@ -184,8 +278,10 @@ func (s *Bot) Shutdown(ctx context.Context) error {
 			errs = errors.Join(errs, fmt.Errorf("stop vibecheck: %w", err))
 		}
 	}
-	if s.configWatcher != nil {
-		s.configWatcher.Stop()
+	if s.configManager != nil {
+		if err := s.configManager.Close(); err != nil {
+			errs = errors.Join(errs, fmt.Errorf("close config manager: %w", err))
+		}
 	}
 	if err := s.slack.Stop(ctx); err != nil {
 		errs = errors.Join(errs, fmt.Errorf("stop slack: %w", err))
@@ -205,5 +301,9 @@ func (s *Bot) ForceShutdown(ctx context.Context) error {
 }
 
 func (s *Bot) Logger() *zap.Logger {
-	return s.logger.Get()
+	if s.log != nil {
+		return s.log
+	}
+	// Return a no-op logger if not initialized
+	return zap.NewNop()
 }

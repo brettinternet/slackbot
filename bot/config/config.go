@@ -117,6 +117,8 @@ type configOpts struct {
 	AIChatMaxContextTokens   int
 	// Vibecheck ban duration
 	VibecheckBanDuration time.Duration
+	// Chat responses
+	ChatResponses []chat.Response
 }
 
 type Config struct {
@@ -196,6 +198,7 @@ func newConfig(opts configOpts) (Config, error) {
 		},
 		Chat: chat.Config{
 			PreferredUsers: opts.PreferredUsers,
+			Responses:      opts.ChatResponses,
 		},
 		Vibecheck: vibecheck.Config{
 			PreferredUsers: opts.PreferredUsers,

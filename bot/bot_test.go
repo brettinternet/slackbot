@@ -70,8 +70,12 @@ func TestBot_Setup_MinimalConfig(t *testing.T) {
 	}
 
 	// Even with error, basic config should be set up
-	if bot.config.Version != "test-version" {
-		t.Errorf("Setup() config.Version = %v, want %v", bot.config.Version, "test-version")
+	if config := bot.configManager.GetConfig(); config == nil || config.Version != "test-version" {
+		if config == nil {
+			t.Error("Setup() should initialize config manager")
+		} else {
+			t.Errorf("Setup() config.Version = %v, want %v", config.Version, "test-version")
+		}
 	}
 
 	if bot.log == nil {

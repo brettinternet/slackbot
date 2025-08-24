@@ -34,14 +34,10 @@ type FileConfig struct {
 	Responses []Response `json:"responses" yaml:"responses"`
 }
 
-// Config defines the configuration for the Chat feature
+// Config defines the runtime configuration for the Chat feature
 type Config struct {
 	PreferredUsers []string
-}
-
-// ChatConfig contains configuration specific to the chat module
-type ChatConfig struct {
-	Responses []Response
+	Responses      []Response
 }
 
 // Chat handles responding to messages based on configured patterns
@@ -53,7 +49,6 @@ type Chat struct {
 	stopCh      chan struct{}
 	eventsCh    chan slackevents.EventsAPIEvent
 	isConnected atomic.Bool
-	fileConfig  FileConfig
 }
 
 func NewChat(log *zap.Logger, c Config, s slackService) *Chat {
@@ -79,7 +74,7 @@ func (c *Chat) Start(ctx context.Context) error {
 	go c.handleEvents(ctx)
 
 	c.log.Debug("Chat feature started successfully.",
-		zap.Int("responses", len(c.fileConfig.Responses)),
+		zap.Int("responses", len(c.config.Responses)),
 	)
 	return nil
 }
@@ -152,7 +147,7 @@ func (c *Chat) handleMessageEvent(ctx context.Context, ev *slackevents.MessageEv
 	)
 
 	var messageReplied bool
-	for _, resp := range c.fileConfig.Responses {
+	for _, resp := range c.config.Responses {
 		var isMatch bool
 		if resp.IsRegexp {
 			re, exists := c.regexps[resp.Pattern]
@@ -233,14 +228,14 @@ func (c *Chat) handleMessageEvent(ctx context.Context, ev *slackevents.MessageEv
 }
 
 // SetConfig updates the chat configuration with values from the centralized config
-func (c *Chat) SetConfig(cfg FileConfig) error {
+func (c *Chat) SetConfig(cfg Config) error {
 	c.log.Info("Updating chat configuration",
 		zap.Int("responses", len(cfg.Responses)))
 
-	c.fileConfig = cfg
+	c.config = cfg
 
 	c.regexps = make(map[string]*regexp.Regexp)
-	for _, resp := range c.fileConfig.Responses {
+	for _, resp := range c.config.Responses {
 		if resp.IsRegexp {
 			re, err := regexp.Compile("(?i)" + resp.Pattern)
 			if err != nil {

@@ -3,16 +3,16 @@ testdata_dir = "testdata"
 tmp_dir = "tmp"
 
 [build]
-args_bin = []
-bin = "./tmp/main"
+args_bin = ["-c", "../../config.yaml"]
+bin = "./build/main"
 cmd = """
 go build \
 -ldflags "-X main.buildVersion=$BUILD_VERSION -X main.buildTime=$BUILD_DATE -X main.buildEnvironment=development" \
 -tags=dev \
--o ./tmp/main main.go
+-o ./build/main main.go
 """
 delay = 1000
-exclude_dir = ["migrations", "tmp", "vendor", "testdata"]
+exclude_dir = ["migrations", "tmp", "vendor", "testdata", "build"]
 exclude_file = []
 exclude_regex = ["_test.go"]
 exclude_unchanged = false
