@@ -27,7 +27,7 @@ type ContextStorage struct {
 // NewContextStorage creates a new context storage instance
 func NewContextStorage(dataDir string) (*ContextStorage, error) {
 	dbPath := filepath.Join(dataDir, "aichat_context.db")
-	
+
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
@@ -109,7 +109,7 @@ func (cs *ContextStorage) GetRecentContext(userID, channelID, personaName string
 	FROM conversation_context
 	WHERE user_id = ? AND channel_id = ? AND persona_name = ?`
 
-	args := []interface{}{userID, channelID, personaName}
+	args := []any{userID, channelID, personaName}
 
 	// Add timestamp filter if MaxContextAge is configured
 	if !minTimestamp.IsZero() {

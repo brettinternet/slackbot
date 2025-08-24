@@ -27,7 +27,7 @@ func (m *mockSlackService) VerifyRequest(headers http.Header, body []byte) error
 // mockSlackEventProcessor for testing
 type mockSlackEventProcessor struct {
 	processEventCalled bool
-	lastEvent         interface{}
+	lastEvent          any
 }
 
 func (m *mockSlackEventProcessor) PushEvent(event slackevents.EventsAPIEvent) {
@@ -264,7 +264,7 @@ func TestServer_Lifecycle(t *testing.T) {
 
 	// Give server time to start
 	time.Sleep(100 * time.Millisecond)
-	
+
 	// Manually set server as ready for testing
 	server.isReady.Store(true)
 

@@ -12,7 +12,6 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-
 func TestEnvironment_String(t *testing.T) {
 	tests := []struct {
 		env      Environment
@@ -77,8 +76,6 @@ func TestEnvironmentFromString(t *testing.T) {
 		})
 	}
 }
-
-
 
 func TestBuildOpts_MakeConfig(t *testing.T) {
 	buildOpts := BuildOpts{
@@ -236,9 +233,9 @@ func TestCurrentExecutableDirectory(t *testing.T) {
 func TestDefault(t *testing.T) {
 	tests := []struct {
 		name       string
-		val        interface{}
-		defaultVal interface{}
-		expected   interface{}
+		val        any
+		defaultVal any
+		expected   any
 	}{
 		{"string zero value", "", "default", "default"},
 		{"string non-zero value", "value", "default", "value"},
@@ -273,17 +270,17 @@ func TestDefault(t *testing.T) {
 
 func TestNewConfig(t *testing.T) {
 	opts := configOpts{
-		Version:            "1.0.0",
-		BuildTime:          "2023-01-01",
-		LogLevel:           "debug",
-		Environment:        "development",
-		DataDir:            "/custom/data",
-		ServerPort:         9000,
-		SlackToken:         "test-token",
-		SlackSigningSecret: "test-secret",
-		OpenAIAPIKey:       "test-key",
-		PreferredUsers:     []string{"user1", "user2"},
-		PreferredChannels:  []string{"channel1"},
+		Version:              "1.0.0",
+		BuildTime:            "2023-01-01",
+		LogLevel:             "debug",
+		Environment:          "development",
+		DataDir:              "/custom/data",
+		ServerPort:           9000,
+		SlackToken:           "test-token",
+		SlackSigningSecret:   "test-secret",
+		OpenAIAPIKey:         "test-key",
+		PreferredUsers:       []string{"user1", "user2"},
+		PreferredChannels:    []string{"channel1"},
 		UserNotifyChannel:    "user-notify",
 		SlackEventsPath:      "/events",
 		ConfigFile:           "./config.yaml",
@@ -350,7 +347,6 @@ func TestNewConfig_EmptyDataDir(t *testing.T) {
 	}
 }
 
-
 func TestNewConfig_PersonasFromYAML(t *testing.T) {
 	// Test parsing personas from YAML config (as would come from file)
 	yamlPersonasConfig := `
@@ -365,7 +361,7 @@ grumpy_mentor: |
 
 	opts := configOpts{
 		Version:        "1.0.0",
-		BuildTime:      "2023-01-01", 
+		BuildTime:      "2023-01-01",
 		Environment:    "development",
 		DataDir:        "./tmp",
 		PersonasConfig: yamlPersonasConfig,
@@ -405,7 +401,7 @@ func TestNewConfig_PersonasFromJSON(t *testing.T) {
 	opts := configOpts{
 		Version:        "1.0.0",
 		BuildTime:      "2023-01-01",
-		Environment:    "development", 
+		Environment:    "development",
 		DataDir:        "./tmp",
 		PersonasConfig: jsonPersonasConfig,
 	}
@@ -440,7 +436,7 @@ func TestNewConfig_InvalidPersonasConfig(t *testing.T) {
 		Version:        "1.0.0",
 		BuildTime:      "2023-01-01",
 		Environment:    "development",
-		DataDir:        "./tmp", 
+		DataDir:        "./tmp",
 		PersonasConfig: "invalid yaml: [broken", // Invalid YAML and JSON
 	}
 

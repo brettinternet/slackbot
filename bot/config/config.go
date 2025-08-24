@@ -150,7 +150,7 @@ func newConfig(opts configOpts) (Config, error) {
 		if strings.HasPrefix(opts.PersonasConfig, "map[") {
 			personas = parseGoMapString(opts.PersonasConfig)
 		} else {
-			var personasData map[string]interface{}
+			var personasData map[string]any
 			err := yaml.Unmarshal([]byte(opts.PersonasConfig), &personasData)
 			if err != nil {
 				err = json.Unmarshal([]byte(opts.PersonasConfig), &personasData)
