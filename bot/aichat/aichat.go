@@ -27,6 +27,7 @@ type aiService interface {
 
 type slackService interface {
 	Client() *slack.Client
+	BotUserID() string
 }
 
 type FileConfig struct {
@@ -142,6 +143,18 @@ func (a *AIChat) handleEvents(ctx context.Context) {
 	}
 }
 
+// isBotMentioned checks if the bot is mentioned in the message text
+func (a *AIChat) isBotMentioned(text string) bool {
+	botUserID := a.slack.BotUserID()
+	if botUserID == "" {
+		return false
+	}
+	
+	// Check for direct mention format: <@USERID>
+	mentionFormat := fmt.Sprintf("<@%s>", botUserID)
+	return strings.Contains(text, mentionFormat)
+}
+
 // processEvent handles a single Slack event
 func (a *AIChat) processEvent(ctx context.Context, event slackevents.EventsAPIEvent) {
 	switch event.Type {
@@ -149,7 +162,7 @@ func (a *AIChat) processEvent(ctx context.Context, event slackevents.EventsAPIEv
 		innerEvent := event.InnerEvent
 		switch ev := innerEvent.Data.(type) {
 		case *slackevents.AppMentionEvent:
-			a.log.Debug("Processing AppMentionEvent",
+			a.log.Debug("Processing AppMentionEvent (direct bot mention)",
 				zap.String("user", ev.User),
 				zap.String("channel", ev.Channel),
 				zap.String("text", ev.Text),
@@ -189,9 +202,23 @@ func (a *AIChat) processEvent(ctx context.Context, event slackevents.EventsAPIEv
 				)
 				return
 			}
-			// 40% chance to drop the event where the bot is not mentioned
-			if random.Bool(0.4) {
-				return
+			// Check if bot is mentioned - this is a fallback for mentions that didn't trigger AppMentionEvent
+			isMentioned := a.isBotMentioned(ev.Text)
+			if isMentioned {
+				// Use mention rate limiter for direct mentions (fallback case)
+				if !a.mentionLimiter.Allow() {
+					a.log.Debug("Mention rate limit exceeded for MessageEvent fallback",
+						zap.String("user", ev.User),
+						zap.String("channel", ev.Channel),
+						zap.String("text", ev.Text),
+					)
+					return
+				}
+			} else {
+				// For non-mentions, 40% chance to drop the event
+				if random.Bool(0.4) {
+					return
+				}
 			}
 			a.handleMessageEvent(ctx, eventMessage{
 				UserID:   ev.User,

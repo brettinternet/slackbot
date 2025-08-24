@@ -105,3 +105,11 @@ func (s *Slack) VerifyRequest(header http.Header, body []byte) error {
 func (s *Slack) OrgURL() string {
 	return s.authResp.URL
 }
+
+// BotUserID returns the bot's user ID
+func (s *Slack) BotUserID() string {
+	if s.authResp != nil {
+		return s.authResp.UserID
+	}
+	return ""
+}
