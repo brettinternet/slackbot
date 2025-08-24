@@ -443,11 +443,11 @@ func ExtractCLIOverrides(cmd *cli.Command) *CLIOverrides {
 		val := cmd.String("slack-events-path")
 		overrides.SlackEventPath = &val
 	}
-	if cmd.IsSet("slack-token") {
+	if cmd.IsSet("slack-token") || cmd.String("slack-token") != "" {
 		val := cmd.String("slack-token")
 		overrides.SlackToken = &val
 	}
-	if cmd.IsSet("slack-signing-secret") {
+	if cmd.IsSet("slack-signing-secret") || cmd.String("slack-signing-secret") != "" {
 		val := cmd.String("slack-signing-secret")
 		overrides.SlackSigningSecret = &val
 	}
@@ -461,7 +461,7 @@ func ExtractCLIOverrides(cmd *cli.Command) *CLIOverrides {
 		val := cmd.String("slack-user-notify-channel")
 		overrides.UserNotifyChannel = &val
 	}
-	if cmd.IsSet("openai-api-key") {
+	if cmd.IsSet("openai-api-key") || cmd.String("openai-api-key") != "" {
 		val := cmd.String("openai-api-key")
 		overrides.OpenAIAPIKey = &val
 	}
