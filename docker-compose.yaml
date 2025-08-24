@@ -21,7 +21,6 @@ services:
     environment:
       <<: *environment
       SERVER_PORT: 4200
-      FEATURES: obituary
       ENVIRONMENT: development
       DATA_DIR: /app/data
     volumes: [./docker/bot/data:/app/data]
