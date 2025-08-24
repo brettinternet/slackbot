@@ -11,7 +11,7 @@ RUN go mod download
 COPY . .
 
 ARG BUILD_ENVIRONMENT="production"
-ARG BUILD_VERSION="dev"
+ARG BUILD_VERSION="nightly"
 ARG BUILD_DATE="unknown"
 RUN mkdir -p ./bin && \
   go build -ldflags "-s -w \
