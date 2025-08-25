@@ -9,7 +9,7 @@ env:
   SERVER_PORT: 4200
   LOG_LEVEL: debug
   BUILD_VERSION: dev
-  BUILD_DATE:
+  BUILD_TIME:
     sh: date -u '+%Y-%m-%dT%H:%M:%SZ'
 
 tasks:
@@ -69,7 +69,7 @@ tasks:
       LDFLAGS: >-
         -s -w
         -X main.buildVersion=$BUILD_VERSION
-        -X main.buildTime=$BUILD_DATE
+        -X main.buildTime=$BUILD_TIME
         -X main.buildEnvironment=production
     cmd: go build -ldflags "{{.LDFLAGS}}" -o ./build/bot ./main.go
 

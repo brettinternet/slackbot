@@ -7,7 +7,7 @@ args_bin = ["-c", "../../config.yaml"]
 bin = "./build/main"
 cmd = """
 go build \
--ldflags "-X main.buildVersion=$BUILD_VERSION -X main.buildTime=$BUILD_DATE -X main.buildEnvironment=development" \
+-ldflags "-X main.buildVersion=$BUILD_VERSION -X main.buildTime=$BUILD_TIME -X main.buildEnvironment=development" \
 -tags=dev \
 -o ./build/main main.go
 """

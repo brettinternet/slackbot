@@ -13,13 +13,13 @@ COPY . .
 
 ARG BUILD_ENVIRONMENT="production"
 ARG BUILD_VERSION="nightly"
-ARG BUILD_DATE="unknown"
+ARG BUILD_TIME="unknown"
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     mkdir -p ./bin && \
     go build -ldflags "-s -w \
     -X main.buildVersion=${BUILD_VERSION} \
-    -X main.buildTime=${BUILD_DATE} \
+    -X main.buildTime=${BUILD_TIME} \
     -X main.buildEnvironment=${BUILD_ENVIRONMENT}" \
     -o ./bin/bot \
     cmd/bot/main.go
