@@ -319,7 +319,6 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 		llms.WithStopWords([]string{
 			"\n\n",
 			"Human:",
-			"User:",
 			"Assistant:",
 			"System:",
 		}))
