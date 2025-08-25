@@ -31,20 +31,20 @@ type slackService interface {
 }
 
 type FileConfig struct {
-	StickyDuration      *time.Duration     `json:"sticky_duration" yaml:"sticky_duration"`
-	MaxContextMessages  *int              `json:"max_context_messages" yaml:"max_context_messages"`
-	MaxContextAge       *time.Duration    `json:"max_context_age" yaml:"max_context_age"`
-	MaxContextTokens    *int              `json:"max_context_tokens" yaml:"max_context_tokens"`
+	StickyDuration     *time.Duration    `json:"sticky_duration" yaml:"sticky_duration"`
+	MaxContextMessages *int              `json:"max_context_messages" yaml:"max_context_messages"`
+	MaxContextAge      *time.Duration    `json:"max_context_age" yaml:"max_context_age"`
+	MaxContextTokens   *int              `json:"max_context_tokens" yaml:"max_context_tokens"`
 	Personas           map[string]string `json:"personas" yaml:"personas"`
 }
 
 type Config struct {
-	DataDir             string
-	Personas            map[string]string
-	StickyDuration      time.Duration
-	MaxContextMessages  int           // Maximum number of messages to include in context
-	MaxContextAge       time.Duration // Maximum age of messages to include in context
-	MaxContextTokens    int           // Approximate maximum tokens for context (rough estimate)
+	DataDir            string
+	Personas           map[string]string
+	StickyDuration     time.Duration
+	MaxContextMessages int           // Maximum number of messages to include in context
+	MaxContextAge      time.Duration // Maximum age of messages to include in context
+	MaxContextTokens   int           // Approximate maximum tokens for context (rough estimate)
 }
 
 type personaAssignment struct {
@@ -74,7 +74,7 @@ func NewAIChat(log *zap.Logger, c Config, s slackService, a aiService) *AIChat {
 		// Continue without context storage - fallback gracefully
 		contextStorage = nil
 	}
-	
+
 	return &AIChat{
 		log:            log,
 		config:         c,
@@ -105,13 +105,13 @@ func (a *AIChat) Start(ctx context.Context) error {
 func (a *AIChat) Stop(ctx context.Context) error {
 	a.isConnected.Store(false)
 	close(a.stopCh)
-	
+
 	if a.context != nil {
 		if err := a.context.Close(); err != nil {
 			a.log.Error("Failed to close context storage", zap.Error(err))
 		}
 	}
-	
+
 	return nil
 }
 
@@ -149,7 +149,7 @@ func (a *AIChat) isBotMentioned(text string) bool {
 	if botUserID == "" {
 		return false
 	}
-	
+
 	// Check for direct mention format: <@USERID>
 	mentionFormat := fmt.Sprintf("<@%s>", botUserID)
 	return strings.Contains(text, mentionFormat)
@@ -215,8 +215,9 @@ func (a *AIChat) processEvent(ctx context.Context, event slackevents.EventsAPIEv
 					return
 				}
 			} else {
-				// For non-mentions, 40% chance to drop the event
-				if random.Bool(0.4) {
+				// Calculate engagement probability based on recent conversation
+				dropChance := a.calculateDropChance(ev.User, ev.Channel, ev.Text)
+				if random.Bool(dropChance) {
 					return
 				}
 			}
@@ -265,20 +266,20 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 	}
 
 	personaName := a.userPersona(m.UserID)
-	
+
 	// Retrieve recent conversation context
 	var recentContext []ConversationContext
 	if a.context != nil {
 		recentContext, err = a.context.GetRecentContext(m.UserID, m.Channel, personaName, &a.config)
 		if err != nil {
-			a.log.Warn("Failed to retrieve conversation context", 
+			a.log.Warn("Failed to retrieve conversation context",
 				zap.String("user", m.UserID),
 				zap.String("channel", m.Channel),
 				zap.Error(err),
 			)
 		}
 	}
-	
+
 	content, err := a.chatPrompt(m.Text, userDetails, personaName, recentContext)
 	if err != nil {
 		a.log.Error("Failed to format prompt",
@@ -292,7 +293,7 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 	// Enhanced length variation for more natural responses
 	var maxLength int
 	var temperature float64
-	
+
 	// Create more varied response lengths
 	lengthVariation := random.Float(0.0, 1.0)
 	switch {
@@ -309,7 +310,7 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 		maxLength = random.Int(500, 1200)
 		temperature = random.Float(1.0, 1.8)
 	}
-	
+
 	completion, err := a.ai.LLM().Call(ctx, content,
 		llms.WithTemperature(temperature),
 		llms.WithMaxTokens(1024),
@@ -331,7 +332,7 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 		)
 		return
 	}
-	
+
 	// Clean up the response to remove unwanted prefixes
 	completion = strings.TrimSpace(completion)
 	if strings.HasPrefix(strings.ToLower(completion), "system:") {
@@ -353,11 +354,11 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 		)
 		return
 	}
-	
+
 	// Store conversation context
 	if a.context != nil {
 		now := time.Now()
-		
+
 		// Store user message
 		userContext := ConversationContext{
 			UserID:      m.UserID,
@@ -368,13 +369,13 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 			Timestamp:   now,
 		}
 		if err := a.context.StoreContext(userContext); err != nil {
-			a.log.Warn("Failed to store user context", 
+			a.log.Warn("Failed to store user context",
 				zap.String("user", m.UserID),
 				zap.String("channel", m.Channel),
 				zap.Error(err),
 			)
 		}
-		
+
 		// Store assistant response
 		assistantContext := ConversationContext{
 			UserID:      m.UserID,
@@ -385,7 +386,7 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 			Timestamp:   now.Add(time.Millisecond), // Ensure ordering
 		}
 		if err := a.context.StoreContext(assistantContext); err != nil {
-			a.log.Warn("Failed to store assistant context", 
+			a.log.Warn("Failed to store assistant context",
 				zap.String("user", m.UserID),
 				zap.String("channel", m.Channel),
 				zap.Error(err),
@@ -420,12 +421,12 @@ func (a *AIChat) randomPersonaName() string {
 		// Fallback to default persona if no personas configured
 		return "default"
 	}
-	
+
 	personaNames := make([]string, 0, len(a.config.Personas))
 	for name := range a.config.Personas {
 		personaNames = append(personaNames, name)
 	}
-	
+
 	return random.String(personaNames)
 }
 
@@ -446,18 +447,33 @@ func (a *AIChat) chatPrompt(input string, u UserDetails, personaName string, con
 		}
 	}
 	// Create a single, clean system message that combines persona and instructions
+	conversationGuidance := ""
+	if len(context) > 0 {
+		// Check if this is an active conversation
+		recentMessages := 0
+		for _, ctx := range context {
+			if time.Since(ctx.Timestamp) < 10*time.Minute {
+				recentMessages++
+			}
+		}
+		if recentMessages >= 2 {
+			conversationGuidance = "\nYou're in an active conversation - respond naturally and build on what's been said."
+		}
+	}
+
 	systemMessage := fmt.Sprintf(`%s
 
-Reply naturally as this character in conversation. Keep responses varied in length and style. When responding:
+Reply naturally as this character. Keep responses varied in length and conversational. When responding:
 - Use the user's first name (%s) when available
 - Consider their timezone (%s) for context
-- Be conversational, not instructional
-- Don't echo the prompt instructions in your response`, 
-		persona, 
-		u.FirstName, 
+- Match the energy and tone of the conversation
+- Don't repeat prompt instructions%s`,
+		persona,
+		u.FirstName,
 		u.TZ,
+		conversationGuidance,
 	)
-	
+
 	prompt := prompts.NewChatPromptTemplate([]prompts.MessageFormatter{
 		prompts.NewSystemMessagePromptTemplate(systemMessage, nil),
 		prompts.NewHumanMessagePromptTemplate(
@@ -489,4 +505,91 @@ Reply naturally as this character in conversation. Keep responses varied in leng
 	}
 
 	return result, nil
+}
+
+// calculateDropChance determines the probability of dropping a message based on engagement factors
+func (a *AIChat) calculateDropChance(userID, channelID, text string) float64 {
+	baseDropChance := 0.4 // Default 40% drop rate
+
+	// Check for recent conversation with this user
+	if a.context != nil {
+		personaName := a.userPersona(userID)
+		recentContext, err := a.context.GetRecentContext(userID, channelID, personaName, &a.config)
+		if err == nil && len(recentContext) > 0 {
+			// Find the most recent bot response
+			var lastBotResponseTime time.Time
+			for i := len(recentContext) - 1; i >= 0; i-- {
+				if recentContext[i].Role == "assistant" {
+					lastBotResponseTime = recentContext[i].Timestamp
+					break
+				}
+			}
+
+			if !lastBotResponseTime.IsZero() {
+				timeSinceLastReply := time.Since(lastBotResponseTime)
+
+				// Increase engagement if we recently replied (conversation momentum)
+				switch {
+				case timeSinceLastReply < 2*time.Minute:
+					baseDropChance = 0.15 // Much more likely to continue conversation
+				case timeSinceLastReply < 10*time.Minute:
+					baseDropChance = 0.25 // Moderately more likely
+				case timeSinceLastReply < 30*time.Minute:
+					baseDropChance = 0.35 // Slightly more likely
+				}
+
+				// But don't be too aggressive - back off if we've responded a lot recently
+				recentBotMessages := 0
+				for _, ctx := range recentContext {
+					if ctx.Role == "assistant" && time.Since(ctx.Timestamp) < 5*time.Minute {
+						recentBotMessages++
+					}
+				}
+				if recentBotMessages >= 3 {
+					baseDropChance += 0.2 // Back off if we've been too chatty
+				}
+			}
+		}
+	}
+
+	// Engagement factors based on message content
+	textLower := strings.ToLower(text)
+
+	// More likely to respond to questions
+	if strings.Contains(textLower, "?") {
+		baseDropChance -= 0.15
+	}
+
+	// More likely to respond to emotional content
+	emotionalWords := []string{"excited", "frustrated", "confused", "help", "stuck", "wow", "amazing", "terrible", "annoying"}
+	for _, word := range emotionalWords {
+		if strings.Contains(textLower, word) {
+			baseDropChance -= 0.1
+			break
+		}
+	}
+
+	// More likely to respond to conversational cues
+	conversationalCues := []string{"thoughts", "think", "opinion", "anyone", "what do you", "how about"}
+	for _, cue := range conversationalCues {
+		if strings.Contains(textLower, cue) {
+			baseDropChance -= 0.1
+			break
+		}
+	}
+
+	// Less likely to respond to very short messages (unless they're questions)
+	if len(strings.TrimSpace(text)) < 10 && !strings.Contains(text, "?") {
+		baseDropChance += 0.2
+	}
+
+	// Clamp between reasonable bounds
+	if baseDropChance < 0.05 {
+		baseDropChance = 0.05 // Always some chance of not responding
+	}
+	if baseDropChance > 0.8 {
+		baseDropChance = 0.8 // Always some chance of responding
+	}
+
+	return baseDropChance
 }
