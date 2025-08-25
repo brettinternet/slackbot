@@ -289,22 +289,39 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 		)
 		return
 	}
-	maxTemp := 1.0
-	maxLength := 300
-	if random.Bool(0.3) {
-		maxTemp = 2.0
-		maxLength = 1000
+	// Enhanced length variation for more natural responses
+	var maxLength int
+	var temperature float64
+	
+	// Create more varied response lengths
+	lengthVariation := random.Float(0.0, 1.0)
+	switch {
+	case lengthVariation < 0.3: // Short responses (30%)
+		maxLength = random.Int(20, 150)
+		temperature = random.Float(0.4, 0.8)
+	case lengthVariation < 0.6: // Medium responses (30%)
+		maxLength = random.Int(100, 400)
+		temperature = random.Float(0.6, 1.2)
+	case lengthVariation < 0.85: // Long responses (25%)
+		maxLength = random.Int(300, 800)
+		temperature = random.Float(0.8, 1.4)
+	default: // Very long responses (15%)
+		maxLength = random.Int(500, 1200)
+		temperature = random.Float(1.0, 1.8)
 	}
+	
 	completion, err := a.ai.LLM().Call(ctx, content,
-		llms.WithTemperature(random.Float(0.3, maxTemp)),
+		llms.WithTemperature(temperature),
 		llms.WithMaxTokens(1024),
-		llms.WithMaxLength(random.Int(3, maxLength)),
+		llms.WithMaxLength(maxLength),
 		llms.WithTopP(0.9),
 		llms.WithFrequencyPenalty(0.5),
 		llms.WithStopWords([]string{
 			"\n\n",
 			"Human:",
 			"User:",
+			"Assistant:",
+			"System:",
 		}))
 	if err != nil {
 		a.log.Error("Failed to generate content",
@@ -314,6 +331,15 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 			zap.Error(err),
 		)
 		return
+	}
+	
+	// Clean up the response to remove unwanted prefixes
+	completion = strings.TrimSpace(completion)
+	if strings.HasPrefix(strings.ToLower(completion), "system:") {
+		completion = strings.TrimSpace(completion[7:]) // Remove "system:" prefix
+	}
+	if strings.HasPrefix(strings.ToLower(completion), "assistant:") {
+		completion = strings.TrimSpace(completion[10:]) // Remove "assistant:" prefix
 	}
 	_, _, err = a.slack.Client().PostMessageContext(
 		ctx,
@@ -420,20 +446,23 @@ func (a *AIChat) chatPrompt(input string, u UserDetails, personaName string, con
 			persona = glazerPrompt
 		}
 	}
+	// Create a single, clean system message that combines persona and instructions
+	systemMessage := fmt.Sprintf(`%s
+
+Reply naturally as this character in conversation. Keep responses varied in length and style. When responding:
+- Use the user's first name (%s) when available
+- Consider their timezone (%s) for context
+- Be conversational, not instructional
+- Don't echo the prompt instructions in your response`, 
+		persona, 
+		u.FirstName, 
+		u.TZ,
+	)
+	
 	prompt := prompts.NewChatPromptTemplate([]prompts.MessageFormatter{
-		prompts.NewSystemMessagePromptTemplate(persona, nil),
-		prompts.NewSystemMessagePromptTemplate(
-			`Your messages are as terse as possible to keep messages short.
-			Do your best to always refer to what the user's query,
-			however you are part of a larger conversation and so participate as a general member of the crowd.\n
-			Details about the user:
-			username={{.username}}, first name={{.firstName}}, last name={{.lastName}}, timezone={{.timezone}}.\n
-			Prefer referring to the user by their first name when available.
-			Use the user's timezone to make assumptions about their location.`,
-			[]string{"username", "firstName", "lastName", "timezone"},
-		),
+		prompts.NewSystemMessagePromptTemplate(systemMessage, nil),
 		prompts.NewHumanMessagePromptTemplate(
-			`{{.prefix}}\n{{.input}}`,
+			`{{.prefix}}{{.input}}`,
 			[]string{"prefix", "input"},
 		),
 	})
@@ -453,12 +482,8 @@ func (a *AIChat) chatPrompt(input string, u UserDetails, personaName string, con
 	}
 
 	result, err := prompt.Format(map[string]any{
-		"username":  u.Username,
-		"firstName": u.FirstName,
-		"lastName":  u.LastName,
-		"timezone":  u.TZ,
-		"prefix":    contextPrefix,
-		"input":     input,
+		"prefix": contextPrefix,
+		"input":  input,
 	})
 	if err != nil {
 		return "", fmt.Errorf("format prompt: %w", err)
