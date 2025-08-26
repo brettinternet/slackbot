@@ -158,3 +158,79 @@ func inviteToChannel(ctx context.Context, cmd *cli.Command, s *Bot) error {
 	s.log.Info("Finished inviting users.", zap.Int("users", len(f.Users)), zap.Int("channels", len(f.Channels)))
 	return nil
 }
+
+type sendMessageCommandFlags struct {
+	Message  string
+	Channels []string
+}
+
+func newSendMessageCommandFlags(cmd *cli.Command) *sendMessageCommandFlags {
+	return &sendMessageCommandFlags{
+		Message:  cmd.String("message"),
+		Channels: cmd.StringSlice("channels"),
+	}
+}
+
+func newSendMessageCommand(s *Bot) *cli.Command {
+	return &cli.Command{
+		Name:   "send-message",
+		Usage:  "Send a message to specified channels or preferred channels",
+		Action: cmdWithBot(sendMessage, s),
+		Flags: []cli.Flag{
+			&cli.StringFlag{
+				Name:     "message",
+				Aliases:  []string{"m"},
+				Usage:    "Message text to send",
+				Required: true,
+			},
+			&cli.StringSliceFlag{
+				Name:    "channels",
+				Aliases: []string{"c"},
+				Usage:   "Channel IDs to send message to. If not specified, uses preferred channels from config",
+			},
+		},
+	}
+}
+
+func sendMessage(ctx context.Context, cmd *cli.Command, s *Bot) error {
+	f := newSendMessageCommandFlags(cmd)
+	if f.Message == "" {
+		return fmt.Errorf("message text is required")
+	}
+
+	channels := f.Channels
+	if len(channels) == 0 {
+		config := s.configManager.GetConfig()
+		if config == nil {
+			return fmt.Errorf("configuration is unavailable")
+		}
+		channels = config.Slack.PreferredChannels
+		if len(channels) == 0 {
+			return fmt.Errorf("no channels specified and no preferred channels configured")
+		}
+		s.log.Info("Using preferred channels from config", zap.Strings("channels", channels))
+	} else {
+		s.log.Info("Using specified channels", zap.Strings("channels", channels))
+	}
+
+	s.log.Info("Sending message to channels", zap.String("message", f.Message), zap.Strings("channels", channels))
+
+	client := s.slack.Client()
+	if client == nil {
+		return fmt.Errorf("slack client is unavailable")
+	}
+
+	var messagesSent int
+	for _, channel := range channels {
+		_, _, err := client.PostMessageContext(ctx, channel, slack.MsgOptionText(f.Message, false))
+		if err != nil {
+			s.log.Error("Failed to send message to channel", zap.String("channel", channel), zap.Error(err))
+			continue
+		}
+		messagesSent++
+		s.log.Debug("Message sent to channel", zap.String("channel", channel))
+	}
+
+	s.log.Info("Finished sending messages", zap.Int("messagesSent", messagesSent), zap.Int("totalChannels", len(channels)))
+	return nil
+}

@@ -43,6 +43,7 @@ tmp
 # build output
 build/
 /cmd/*/data
+/cmd/bot/bot
 /docker/*/data
 /slackbot
 
