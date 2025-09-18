@@ -176,10 +176,11 @@ func (a *AIChat) processEvent(ctx context.Context, event slackevents.EventsAPIEv
 				return
 			}
 			a.handleMessageEvent(ctx, eventMessage{
-				UserID:   ev.User,
-				Channel:  ev.Channel,
-				Text:     ev.Text,
-				Username: "",
+				UserID:          ev.User,
+				Channel:         ev.Channel,
+				Text:            ev.Text,
+				Username:        "",
+				ThreadTimeStamp: ev.ThreadTimeStamp,
 			})
 		case *slackevents.MessageEvent:
 			a.log.Debug("Processing MessageEvent",
@@ -222,20 +223,22 @@ func (a *AIChat) processEvent(ctx context.Context, event slackevents.EventsAPIEv
 				}
 			}
 			a.handleMessageEvent(ctx, eventMessage{
-				UserID:   ev.User,
-				Channel:  ev.Channel,
-				Text:     ev.Text,
-				Username: ev.Username,
+				UserID:          ev.User,
+				Channel:         ev.Channel,
+				Text:            ev.Text,
+				Username:        ev.Username,
+				ThreadTimeStamp: ev.ThreadTimeStamp,
 			})
 		}
 	}
 }
 
 type eventMessage struct {
-	UserID   string
-	Username string
-	Channel  string
-	Text     string
+	UserID          string
+	Username        string
+	Channel         string
+	Text            string
+	ThreadTimeStamp string
 }
 
 // handleMessageEvent processes a message event and generates a response
@@ -290,25 +293,25 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 		)
 		return
 	}
-	// Enhanced length variation for more natural responses
+
+	// Weighted random length heavily favoring shorter responses
 	var maxLength int
 	var temperature float64
 
-	// Create more varied response lengths
 	lengthVariation := random.Float(0.0, 1.0)
 	switch {
-	case lengthVariation < 0.3: // Short responses (30%)
-		maxLength = random.Int(20, 150)
+	case lengthVariation < 0.60: // Very short responses (60%)
+		maxLength = random.Int(10, 80)
+		temperature = random.Float(0.3, 0.7)
+	case lengthVariation < 0.85: // Short responses (25%)
+		maxLength = random.Int(50, 200)
 		temperature = random.Float(0.4, 0.8)
-	case lengthVariation < 0.6: // Medium responses (30%)
-		maxLength = random.Int(100, 400)
-		temperature = random.Float(0.6, 1.2)
-	case lengthVariation < 0.85: // Long responses (25%)
-		maxLength = random.Int(300, 800)
-		temperature = random.Float(0.8, 1.4)
-	default: // Very long responses (15%)
-		maxLength = random.Int(500, 1200)
-		temperature = random.Float(1.0, 1.8)
+	case lengthVariation < 0.95: // Medium responses (10%)
+		maxLength = random.Int(150, 400)
+		temperature = random.Float(0.6, 1.0)
+	default: // Longer responses (5%)
+		maxLength = random.Int(300, 600)
+		temperature = random.Float(0.8, 1.2)
 	}
 
 	completion, err := a.ai.LLM().Call(ctx, content,
@@ -341,11 +344,21 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 	if strings.HasPrefix(strings.ToLower(completion), "assistant:") {
 		completion = strings.TrimSpace(completion[10:]) // Remove "assistant:" prefix
 	}
+
+	msgOptions := []slack.MsgOption{
+		slack.MsgOptionText(completion, false),
+		slack.MsgOptionAsUser(true),
+	}
+
+	// If this is a threaded message, reply in the thread
+	if m.ThreadTimeStamp != "" {
+		msgOptions = append(msgOptions, slack.MsgOptionTS(m.ThreadTimeStamp))
+	}
+
 	_, _, err = a.slack.Client().PostMessageContext(
 		ctx,
 		m.Channel,
-		slack.MsgOptionText(completion, false),
-		slack.MsgOptionAsUser(true),
+		msgOptions...,
 	)
 	if err != nil {
 		a.log.Error("Failed to post response",
