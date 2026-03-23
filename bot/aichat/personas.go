@@ -26,4 +26,3 @@ var personas = map[string]string{
 	"unhinged": unhingedPrompt,
 	"computer": computerPrompt,
 }
-
