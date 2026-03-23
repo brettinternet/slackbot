@@ -296,36 +296,44 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 
 	// Weighted random length heavily favoring shorter responses
 	var maxLength int
+	var maxTokens int
 	var temperature float64
+	var stopWords []string
+
+	baseStopWords := []string{"\n\n", "Human:", "Assistant:", "System:"}
 
 	lengthVariation := random.Float(0.0, 1.0)
 	switch {
-	case lengthVariation < 0.60: // Very short responses (60%)
-		maxLength = random.Int(10, 80)
-		temperature = random.Float(0.3, 0.7)
+	case lengthVariation < 0.60: // Very short responses (60%) — single-line punchy reaction
+		maxLength = random.Int(10, 90)
+		maxTokens = 40
+		temperature = random.Float(0.7, 1.1)
+		stopWords = append(baseStopWords, "\n") // force single line
 	case lengthVariation < 0.85: // Short responses (25%)
-		maxLength = random.Int(50, 200)
-		temperature = random.Float(0.4, 0.8)
-	case lengthVariation < 0.95: // Medium responses (10%)
-		maxLength = random.Int(150, 400)
+		maxLength = random.Int(60, 180)
+		maxTokens = 80
 		temperature = random.Float(0.6, 1.0)
-	default: // Longer responses (5%)
-		maxLength = random.Int(300, 600)
+		stopWords = baseStopWords
+	case lengthVariation < 0.95: // Medium responses (10%)
+		maxLength = random.Int(150, 350)
+		maxTokens = 150
+		temperature = random.Float(0.7, 1.1)
+		stopWords = baseStopWords
+	default: // Longer responses (5%) — still not an essay
+		maxLength = random.Int(250, 500)
+		maxTokens = 200
 		temperature = random.Float(0.8, 1.2)
+		stopWords = baseStopWords
 	}
 
 	completion, err := a.ai.LLM().Call(ctx, content,
 		llms.WithTemperature(temperature),
-		llms.WithMaxTokens(1024),
+		llms.WithMaxTokens(maxTokens),
 		llms.WithMaxLength(maxLength),
 		llms.WithTopP(0.9),
-		llms.WithFrequencyPenalty(0.5),
-		llms.WithStopWords([]string{
-			"\n\n",
-			"Human:",
-			"Assistant:",
-			"System:",
-		}))
+		llms.WithFrequencyPenalty(0.6),
+		llms.WithPresencePenalty(0.3),
+		llms.WithStopWords(stopWords))
 	if err != nil {
 		a.log.Error("Failed to generate content",
 			zap.String("user", m.UserID),
@@ -470,20 +478,20 @@ func (a *AIChat) chatPrompt(input string, u UserDetails, personaName string, con
 			}
 		}
 		if recentMessages >= 2 {
-			conversationGuidance = "\nYou're in an active conversation - respond naturally and build on what's been said."
+			conversationGuidance = "\nConversation is active — build on what's been said, don't restart."
 		}
+	}
+
+	nameHint := ""
+	if u.FirstName != "" {
+		nameHint = fmt.Sprintf(" You know their name is %s — use it occasionally, not every message.", u.FirstName)
 	}
 
 	systemMessage := fmt.Sprintf(`%s
 
-Reply naturally as this character. Keep responses varied in length and conversational. When responding:
-- Use the user's first name (%s) when available
-- Consider their timezone (%s) for context
-- Match the energy and tone of the conversation
-- Don't repeat prompt instructions%s`,
+You're in a Slack chat. Keep replies SHORT — one sentence usually, two max. Never write paragraphs, lists, or essays. This is casual chat, not a support ticket.%s%s`,
 		persona,
-		u.FirstName,
-		u.TZ,
+		nameHint,
 		conversationGuidance,
 	)
 
