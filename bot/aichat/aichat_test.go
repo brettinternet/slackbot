@@ -1,6 +1,7 @@
 package aichat
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -445,63 +446,65 @@ func TestAIChat_CalculateDropChance_WithRecentContext(t *testing.T) {
 	}
 }
 
-// --- chatPrompt Tests ---
+// --- buildMessages Tests ---
 
-func TestAIChat_ChatPrompt_ContainsPersona(t *testing.T) {
+func TestAIChat_BuildMessages_ContainsPersona(t *testing.T) {
 	a := newTestAIChat(t, Config{
 		Personas: map[string]string{"testpersona": "YOU ARE THE TEST PERSONA"},
 	})
 
-	result, err := a.chatPrompt("hello", UserDetails{}, "testpersona", nil)
-	if err != nil {
-		t.Fatalf("chatPrompt failed: %v", err)
+	msgs := a.buildMessages("hello", UserDetails{}, "testpersona", nil)
+	if len(msgs) == 0 {
+		t.Fatal("expected at least one message")
 	}
-	if !strings.Contains(result, "YOU ARE THE TEST PERSONA") {
-		t.Errorf("expected persona content in prompt, got: %s", result)
+	systemContent := fmt.Sprintf("%v", msgs[0].Parts)
+	if !strings.Contains(systemContent, "YOU ARE THE TEST PERSONA") {
+		t.Errorf("expected persona content in system message, got: %s", systemContent)
 	}
 }
 
-func TestAIChat_ChatPrompt_FallsBackToHardcodedPersona(t *testing.T) {
+func TestAIChat_BuildMessages_FallsBackToHardcodedPersona(t *testing.T) {
 	a := newTestAIChat(t, Config{Personas: map[string]string{}})
 
-	result, err := a.chatPrompt("hello", UserDetails{}, "glazer", nil)
-	if err != nil {
-		t.Fatalf("chatPrompt failed: %v", err)
+	msgs := a.buildMessages("hello", UserDetails{}, "glazer", nil)
+	if len(msgs) == 0 {
+		t.Fatal("expected at least one message")
 	}
-	// Should fall back to the hardcoded glazer prompt
-	if !strings.Contains(result, "Gen-Z") {
-		t.Errorf("expected glazer persona fallback, got: %s", result)
+	systemContent := fmt.Sprintf("%v", msgs[0].Parts)
+	if !strings.Contains(systemContent, "Gen-Z") {
+		t.Errorf("expected glazer persona fallback, got: %s", systemContent)
 	}
 }
 
-func TestAIChat_ChatPrompt_FallsBackToGlazerWhenUnknown(t *testing.T) {
+func TestAIChat_BuildMessages_FallsBackToGlazerWhenUnknown(t *testing.T) {
 	a := newTestAIChat(t, Config{Personas: map[string]string{}})
 
-	result, err := a.chatPrompt("hello", UserDetails{}, "nonexistent_persona", nil)
-	if err != nil {
-		t.Fatalf("chatPrompt failed: %v", err)
+	msgs := a.buildMessages("hello", UserDetails{}, "nonexistent_persona", nil)
+	if len(msgs) == 0 {
+		t.Fatal("expected at least one message")
 	}
-	// Should fall back to glazer default
-	if !strings.Contains(result, "Gen-Z") {
-		t.Errorf("expected glazer default fallback, got: %s", result)
+	systemContent := fmt.Sprintf("%v", msgs[0].Parts)
+	if !strings.Contains(systemContent, "Gen-Z") {
+		t.Errorf("expected glazer default fallback, got: %s", systemContent)
 	}
 }
 
-func TestAIChat_ChatPrompt_IncludesNameHint(t *testing.T) {
+func TestAIChat_BuildMessages_IncludesNameHint(t *testing.T) {
 	a := newTestAIChat(t, Config{
 		Personas: map[string]string{"p": "you are a test"},
 	})
 
-	result, err := a.chatPrompt("hello", UserDetails{FirstName: "Alice"}, "p", nil)
-	if err != nil {
-		t.Fatalf("chatPrompt failed: %v", err)
+	msgs := a.buildMessages("hello", UserDetails{FirstName: "Alice"}, "p", nil)
+	if len(msgs) == 0 {
+		t.Fatal("expected at least one message")
 	}
-	if !strings.Contains(result, "Alice") {
-		t.Errorf("expected name 'Alice' in prompt, got: %s", result)
+	systemContent := fmt.Sprintf("%v", msgs[0].Parts)
+	if !strings.Contains(systemContent, "Alice") {
+		t.Errorf("expected name 'Alice' in system message, got: %s", systemContent)
 	}
 }
 
-func TestAIChat_ChatPrompt_IncludesContext(t *testing.T) {
+func TestAIChat_BuildMessages_IncludesContextAsTypedTurns(t *testing.T) {
 	a := newTestAIChat(t, Config{
 		Personas: map[string]string{"p": "you are a test"},
 	})
@@ -510,19 +513,28 @@ func TestAIChat_ChatPrompt_IncludesContext(t *testing.T) {
 		{Role: "human", Message: "tell me a joke", Timestamp: time.Now().Add(-5 * time.Minute)},
 		{Role: "assistant", Message: "why did the chicken cross the road", Timestamp: time.Now().Add(-4 * time.Minute)},
 	}
-	result, err := a.chatPrompt("that was bad", UserDetails{}, "p", ctx)
-	if err != nil {
-		t.Fatalf("chatPrompt failed: %v", err)
+	msgs := a.buildMessages("that was bad", UserDetails{}, "p", ctx)
+
+	// Expect: system, human (ctx), AI (ctx), human (current) = 4 messages
+	if len(msgs) != 4 {
+		t.Fatalf("expected 4 messages (system + 2 context + 1 current), got %d", len(msgs))
 	}
-	if !strings.Contains(result, "tell me a joke") {
-		t.Errorf("expected context messages in prompt, got: %s", result)
+	if msgs[1].Role != "human" {
+		t.Errorf("expected msgs[1] role 'human', got %q", msgs[1].Role)
 	}
-	if !strings.Contains(result, "why did the chicken cross the road") {
-		t.Errorf("expected assistant context in prompt, got: %s", result)
+	if msgs[2].Role != "ai" {
+		t.Errorf("expected msgs[2] role 'ai', got %q", msgs[2].Role)
+	}
+	if msgs[3].Role != "human" {
+		t.Errorf("expected msgs[3] role 'human', got %q", msgs[3].Role)
+	}
+	lastContent := fmt.Sprintf("%v", msgs[3].Parts)
+	if !strings.Contains(lastContent, "that was bad") {
+		t.Errorf("expected current message in last turn, got: %s", lastContent)
 	}
 }
 
-func TestAIChat_ChatPrompt_ActiveConversationGuidance(t *testing.T) {
+func TestAIChat_BuildMessages_ActiveConversationGuidance(t *testing.T) {
 	a := newTestAIChat(t, Config{
 		Personas: map[string]string{"p": "you are a test"},
 	})
@@ -533,12 +545,13 @@ func TestAIChat_ChatPrompt_ActiveConversationGuidance(t *testing.T) {
 		{Role: "assistant", Message: "reply1", Timestamp: time.Now().Add(-2 * time.Minute)},
 		{Role: "human", Message: "msg2", Timestamp: time.Now().Add(-1 * time.Minute)},
 	}
-	result, err := a.chatPrompt("new message", UserDetails{}, "p", ctx)
-	if err != nil {
-		t.Fatalf("chatPrompt failed: %v", err)
+	msgs := a.buildMessages("new message", UserDetails{}, "p", ctx)
+	if len(msgs) == 0 {
+		t.Fatal("expected at least one message")
 	}
-	if !strings.Contains(result, "active") {
-		t.Errorf("expected active conversation guidance in prompt, got: %s", result)
+	systemContent := fmt.Sprintf("%v", msgs[0].Parts)
+	if !strings.Contains(systemContent, "active") {
+		t.Errorf("expected active conversation guidance in system message, got: %s", systemContent)
 	}
 }
 
@@ -581,42 +594,6 @@ func TestAIChat_ProcessEvent_IgnoresMessageEventFromBot(t *testing.T) {
 		},
 	}
 	a.processEvent(nil, event) //nolint:staticcheck
-}
-
-// --- Role Label Stripping Tests ---
-
-func TestRoleLabelRE(t *testing.T) {
-	cases := []struct {
-		input string
-		want  string
-	}{
-		// labels that must be stripped
-		{"AI: hey what's up", "hey what's up"},
-		{"Assistant: sure thing", "sure thing"},
-		{"SeniorDev: back in my day", "back in my day"},
-		{"Grumpy Mentor: kids these days", "kids these days"},
-		{"System: hello", "hello"},
-		{"Bot: yo", "yo"},
-		// extra whitespace after colon
-		{"AI:   lots of spaces", "lots of spaces"},
-		// normal messages that must NOT be stripped
-		{"no label here", "no label here"},
-		{"https://example.com is a URL", "https://example.com is a URL"},
-		{"just some text: with a colon mid-sentence", "just some text: with a colon mid-sentence"},
-		// single word > 20 chars should not be stripped
-		{"ThisIsWayTooLongLabel: text", "ThisIsWayTooLongLabel: text"},
-		// more than two words before colon should not be stripped
-		{"one two three: text", "one two three: text"},
-		// no space after colon (e.g. URLs) should not be stripped
-		{"Key:value", "Key:value"},
-	}
-
-	for _, tc := range cases {
-		got := strings.TrimSpace(roleLabelRE.ReplaceAllLiteralString(strings.TrimSpace(tc.input), ""))
-		if got != tc.want {
-			t.Errorf("input %q: got %q, want %q", tc.input, got, tc.want)
-		}
-	}
 }
 
 // --- Stop Word Limit Tests ---

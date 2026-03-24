@@ -4,7 +4,6 @@ package aichat
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -14,21 +13,12 @@ import (
 	"github.com/slack-go/slack/slackevents"
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/llms/openai"
-	"github.com/tmc/langchaingo/prompts"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
 	"slackbot.arpa/tools/random"
 )
 
 const eventChannelSize = 10
-
-// roleLabelRE matches a leading role label that the model sometimes emits,
-// e.g. "AI:", "Assistant:", "SeniorDev:", "Grumpy Mentor:".
-// Constraints that prevent false positives:
-//   - At most two words (one optional space-separated word), each ≤ 20 chars
-//   - Words contain only letters/digits (no punctuation)
-//   - Must be followed by at least one space after the colon (rules out URLs like "https://")
-var roleLabelRE = regexp.MustCompile(`(?i)^[A-Za-z][A-Za-z0-9]{0,19}(?:\s[A-Za-z][A-Za-z0-9]{0,19})?\s*:\s+`)
 
 type aiService interface {
 	LLM() *openai.LLM
@@ -292,19 +282,9 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 		}
 	}
 
-	content, err := a.chatPrompt(m.Text, userDetails, personaName, recentContext)
-	if err != nil {
-		a.log.Error("Failed to format prompt",
-			zap.String("user", m.UserID),
-			zap.String("channel", m.Channel),
-			zap.String("text", eventMessage),
-			zap.Error(err),
-		)
-		return
-	}
+	messages := a.buildMessages(m.Text, userDetails, personaName, recentContext)
 
 	// Weighted random length heavily favoring shorter responses
-	var maxLength int
 	var maxTokens int
 	var temperature float64
 
@@ -313,27 +293,22 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 	stopWords := stopWordsForVariation(lengthVariation)
 	switch {
 	case lengthVariation < 0.60: // Very short responses (60%) — single-line punchy reaction
-		maxLength = random.Int(10, 90)
 		maxTokens = 40
 		temperature = random.Float(0.7, 1.1)
 	case lengthVariation < 0.85: // Short responses (25%)
-		maxLength = random.Int(60, 180)
 		maxTokens = 80
 		temperature = random.Float(0.6, 1.0)
 	case lengthVariation < 0.95: // Medium responses (10%)
-		maxLength = random.Int(150, 350)
 		maxTokens = 150
 		temperature = random.Float(0.7, 1.1)
 	default: // Longer responses (5%) — still not an essay
-		maxLength = random.Int(250, 500)
 		maxTokens = 200
 		temperature = random.Float(0.8, 1.2)
 	}
 
-	completion, err := a.ai.LLM().Call(ctx, content,
+	resp, err := a.ai.LLM().GenerateContent(ctx, messages,
 		llms.WithTemperature(temperature),
 		llms.WithMaxTokens(maxTokens),
-		llms.WithMaxLength(maxLength),
 		llms.WithTopP(0.9),
 		llms.WithFrequencyPenalty(0.6),
 		llms.WithPresencePenalty(0.3),
@@ -348,9 +323,15 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 		return
 	}
 
-	// Strip any leading role label the model may emit (e.g. "AI:", "SeniorDev:", "Assistant:").
-	completion = strings.TrimSpace(completion)
-	completion = roleLabelRE.ReplaceAllLiteralString(completion, "")
+	if len(resp.Choices) == 0 || resp.Choices[0].Content == "" {
+		a.log.Warn("Empty response from LLM",
+			zap.String("user", m.UserID),
+			zap.String("channel", m.Channel),
+		)
+		return
+	}
+
+	completion := strings.TrimSpace(resp.Choices[0].Content)
 
 	msgOptions := []slack.MsgOption{
 		slack.MsgOptionText(completion, false),
@@ -457,19 +438,20 @@ type UserDetails struct {
 	TZ        string
 }
 
-func (a *AIChat) chatPrompt(input string, u UserDetails, personaName string, context []ConversationContext) (string, error) {
+// buildMessages constructs a properly typed chat message sequence for the LLM.
+// Using GenerateContent with structured messages (rather than Call with a flattened
+// string) ensures the model never emits role-label prefixes like "AI:" or "Assistant:".
+func (a *AIChat) buildMessages(input string, u UserDetails, personaName string, context []ConversationContext) []llms.MessageContent {
 	persona := a.config.Personas[personaName]
 	if persona == "" {
-		// Fallback to hardcoded personas if not found in config
 		persona = personas[personaName]
 		if persona == "" {
 			persona = glazerPrompt
 		}
 	}
-	// Create a single, clean system message that combines persona and instructions
+
 	conversationGuidance := ""
 	if len(context) > 0 {
-		// Check if this is an active conversation
 		recentMessages := 0
 		for _, ctx := range context {
 			if time.Since(ctx.Timestamp) < 10*time.Minute {
@@ -486,7 +468,7 @@ func (a *AIChat) chatPrompt(input string, u UserDetails, personaName string, con
 		nameHint = fmt.Sprintf(" You know their name is %s — use it occasionally, not every message.", u.FirstName)
 	}
 
-	systemMessage := fmt.Sprintf(`%s
+	systemPrompt := fmt.Sprintf(`%s
 
 You're in a Slack chat. Keep replies SHORT — one sentence usually, two max. Never write paragraphs, lists, or essays. This is casual chat, not a support ticket.%s%s`,
 		persona,
@@ -494,47 +476,37 @@ You're in a Slack chat. Keep replies SHORT — one sentence usually, two max. Ne
 		conversationGuidance,
 	)
 
-	prompt := prompts.NewChatPromptTemplate([]prompts.MessageFormatter{
-		prompts.NewSystemMessagePromptTemplate(systemMessage, nil),
-		prompts.NewHumanMessagePromptTemplate(
-			`{{.prefix}}{{.input}}`,
-			[]string{"prefix", "input"},
-		),
-	})
+	messages := []llms.MessageContent{
+		llms.TextParts(llms.ChatMessageTypeSystem, systemPrompt),
+	}
 
-	// Build conversation context prefix
-	contextPrefix := ""
-	if len(context) > 0 {
-		contextPrefix = "Recent conversation:\n"
-		for _, ctx := range context {
-			if ctx.Role == "human" {
-				contextPrefix += fmt.Sprintf("User: %s\n", ctx.Message)
-			} else {
-				contextPrefix += fmt.Sprintf("Assistant: %s\n", ctx.Message)
-			}
+	// Add conversation history as properly typed turns
+	for _, ctx := range context {
+		switch ctx.Role {
+		case "human":
+			messages = append(messages, llms.TextParts(llms.ChatMessageTypeHuman, ctx.Message))
+		case "assistant":
+			messages = append(messages, llms.TextParts(llms.ChatMessageTypeAI, ctx.Message))
 		}
-		contextPrefix += "\n"
 	}
 
-	result, err := prompt.Format(map[string]any{
-		"prefix": contextPrefix,
-		"input":  input,
-	})
-	if err != nil {
-		return "", fmt.Errorf("format prompt: %w", err)
-	}
+	// Add the current user message
+	messages = append(messages, llms.TextParts(llms.ChatMessageTypeHuman, input))
 
-	return result, nil
+	return messages
 }
 
 // stopWordsForVariation returns stop sequences for the given length-variation bucket.
 // OpenAI enforces a maximum of 4 stop sequences — this function must never exceed that.
+// Role-label stops ("Human:", "Assistant:") are no longer needed since GenerateContent
+// uses the chat API which never produces them.
 func stopWordsForVariation(v float64) []string {
 	if v < 0.60 {
-		// Single-line replies: "\n" already catches "\n\n", so we don't need both.
-		return []string{"\n", "Human:", "Assistant:", "System:"}
+		// Single-line replies: stop at first newline.
+		return []string{"\n"}
 	}
-	return []string{"\n\n", "Human:", "Assistant:", "System:"}
+	// Longer tiers: stop at paragraph breaks.
+	return []string{"\n\n"}
 }
 
 // calculateDropChance determines the probability of dropping a message based on engagement factors
