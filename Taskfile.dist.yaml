@@ -50,3 +50,8 @@ tasks:
     desc: Clean
     deps:
       - task: bot:clean
+
+  build:
+    desc: Build
+    deps:
+      - task: bot:build

@@ -71,7 +71,7 @@ tasks:
         -X main.buildVersion=$BUILD_VERSION
         -X main.buildTime=$BUILD_TIME
         -X main.buildEnvironment=production
-    cmd: go build -ldflags "{{.LDFLAGS}}" -o ./build/bot ./main.go
+    cmd: go build -ldflags "{{.LDFLAGS}}" -o ./bin/bot ./{{.MAIN_DIR}}
 
   build:docker:
     desc: Build
