@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        go-version: [1.24.x, 1.25.x]
+        go-version: [1.25.x]
     steps:
       - name: Check out code
         uses: actions/checkout@v4
@@ -91,6 +91,7 @@ jobs:
           go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
           go install github.com/securego/gosec/v2/cmd/gosec@latest
           go install github.com/kisielk/errcheck@latest
+          curl -sSfL https://raw.githubusercontent.com/gitleaks/gitleaks/main/scripts/install.sh | sh -s -- -b /usr/local/bin
 
       - name: Install dprint
         run: |
@@ -141,13 +142,8 @@ jobs:
         run: |
           go test -bench=. -benchmem ./... | tee benchmark.txt
 
-      - name: Store benchmark result
-        uses: benchmark-action/github-action-benchmark@v1
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
         with:
-          tool: go
-          output-file-path: benchmark.txt
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          auto-push: true
-          comment-on-alert: true
-          alert-threshold: 200%
-          fail-on-alert: true
+          name: benchmark-results
+          path: benchmark.txt

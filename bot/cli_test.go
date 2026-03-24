@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"slackbot.arpa/bot/config"
@@ -116,6 +117,9 @@ func TestCommandRoot_StartCommand(t *testing.T) {
 }
 
 func TestCommandRoot_StartCommand_MissingFlags(t *testing.T) {
+	t.Setenv("SLACK_TOKEN", "")
+	t.Setenv("SLACK_SIGNING_SECRET", "")
+
 	buildOpts := config.BuildOpts{
 		BuildVersion:     "test-version",
 		BuildTime:        "test-time",
@@ -125,29 +129,29 @@ func TestCommandRoot_StartCommand_MissingFlags(t *testing.T) {
 	bot := NewBot(buildOpts)
 	start, cmd := NewCommandRoot(bot)
 
-	// Test start command without required flags
 	ctx := context.Background()
 	args := []string{
 		"bot",
-		"start",
-		"--config-file=/dev/null", // Use non-existent config to avoid path issues
-		// Missing required --slack-token and --slack-signing-secret
+		"--config-file=/dev/null",
 	}
 
 	err := cmd.Run(ctx, args)
 
-	// Should not error at CLI level - validation happens in Setup()
-	if err != nil && err.Error() != "no Slack authentication credentials provided" {
-		t.Errorf("Start command without flags should parse, got error = %v", err)
+	// Before (Setup) fails with a credentials error before Action runs
+	if err == nil || !strings.Contains(err.Error(), "no Slack authentication credentials provided") {
+		t.Errorf("expected credentials error, got %v", err)
 	}
 
-	// Start flag should still be set even if validation fails later
-	if !*start {
-		t.Error("Start command should set start flag to true even with missing flags")
+	// *start is not set because Action never runs when Before fails
+	if *start {
+		t.Error("start should not be set when Setup fails")
 	}
 }
 
 func TestCommandRoot_WithConfigFile(t *testing.T) {
+	t.Setenv("SLACK_TOKEN", "")
+	t.Setenv("SLACK_SIGNING_SECRET", "")
+
 	buildOpts := config.BuildOpts{
 		BuildVersion:     "test-version",
 		BuildTime:        "test-time",
@@ -157,23 +161,22 @@ func TestCommandRoot_WithConfigFile(t *testing.T) {
 	bot := NewBot(buildOpts)
 	start, cmd := NewCommandRoot(bot)
 
-	// Test with config file flag
 	ctx := context.Background()
 	args := []string{
 		"bot",
 		"--config-file", "../config.yaml",
-		// No Slack credentials - should fail early but set start flag
 	}
 
 	err := cmd.Run(ctx, args)
 
-	// Should fail with no credentials error but still set start flag
-	if err != nil && err.Error() != "no Slack authentication credentials provided" {
-		t.Errorf("Start command should fail with no credentials error, got = %v", err)
+	// Before (Setup) fails with a credentials error before Action runs
+	if err == nil || !strings.Contains(err.Error(), "no Slack authentication credentials provided") {
+		t.Errorf("expected credentials error, got %v", err)
 	}
 
-	if !*start {
-		t.Error("Start command should set start flag to true")
+	// *start is not set because Action never runs when Before fails
+	if *start {
+		t.Error("start should not be set when Setup fails")
 	}
 }
 
