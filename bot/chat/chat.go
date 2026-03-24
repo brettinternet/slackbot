@@ -199,15 +199,21 @@ func (c *Chat) handleMessageEvent(ctx context.Context, ev *slackevents.MessageEv
 				if len(resp.RandomMessages) > 0 {
 					messages = append([]string{randomString(resp.RandomMessages)}, messages...)
 				}
+				baseMsgOptions := []slack.MsgOption{
+					slack.MsgOptionAsUser(true),
+				}
+				if ev.ThreadTimeStamp != "" {
+					baseMsgOptions = append(baseMsgOptions, slack.MsgOptionTS(ev.ThreadTimeStamp))
+				}
 				for _, msg := range messages {
 					if msg == "" {
 						continue
 					}
+					msgOptions := append(baseMsgOptions, slack.MsgOptionText(msg, false))
 					_, _, err := c.slack.Client().PostMessageContext(
 						ctx,
 						ev.Channel,
-						slack.MsgOptionText(msg, false),
-						slack.MsgOptionAsUser(true),
+						msgOptions...,
 					)
 					if err != nil {
 						c.log.Error("Failed to post response",

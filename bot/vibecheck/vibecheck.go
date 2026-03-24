@@ -187,11 +187,17 @@ func (c *Vibecheck) handleMessageEvent(ctx context.Context, ev *slackevents.Mess
 		}
 
 		response := randomResponse(passed, c.fileConfig)
+		msgOptions := []slack.MsgOption{
+			slack.MsgOptionText(response, false),
+			slack.MsgOptionAsUser(true),
+		}
+		if ev.ThreadTimeStamp != "" {
+			msgOptions = append(msgOptions, slack.MsgOptionTS(ev.ThreadTimeStamp))
+		}
 		_, _, err = c.slack.Client().PostMessageContext(
 			ctx,
 			ev.Channel,
-			slack.MsgOptionText(response, false),
-			slack.MsgOptionAsUser(true),
+			msgOptions...,
 		)
 		if err != nil {
 			c.log.Error("Failed to post response",
