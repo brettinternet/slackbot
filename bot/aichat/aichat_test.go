@@ -583,6 +583,42 @@ func TestAIChat_ProcessEvent_IgnoresMessageEventFromBot(t *testing.T) {
 	a.processEvent(nil, event) //nolint:staticcheck
 }
 
+// --- Stop Word Limit Tests ---
+
+// TestAIChat_StopWords_NeverExceedOpenAILimit verifies that every length tier produces
+// at most 4 stop sequences (the OpenAI API maximum).
+func TestAIChat_StopWords_NeverExceedOpenAILimit(t *testing.T) {
+	const openAIMaxStopWords = 4
+
+	// Force each tier by exhaustive sampling across the full [0,1) range.
+	tiers := []struct {
+		name      string
+		variation float64
+	}{
+		{"very short (60%)", 0.0},
+		{"very short mid", 0.30},
+		{"very short top", 0.59},
+		{"short (25%)", 0.60},
+		{"short mid", 0.72},
+		{"short top", 0.84},
+		{"medium (10%)", 0.85},
+		{"medium mid", 0.90},
+		{"medium top", 0.94},
+		{"longer (5%)", 0.95},
+		{"longer top", 0.99},
+	}
+
+	for _, tt := range tiers {
+		t.Run(tt.name, func(t *testing.T) {
+			stopWords := stopWordsForVariation(tt.variation)
+			if len(stopWords) > openAIMaxStopWords {
+				t.Errorf("tier %q produced %d stop words (max %d): %v",
+					tt.name, len(stopWords), openAIMaxStopWords, stopWords)
+			}
+		})
+	}
+}
+
 // --- YAML Parsing Tests ---
 
 func TestConfig_PersonasParsing(t *testing.T) {

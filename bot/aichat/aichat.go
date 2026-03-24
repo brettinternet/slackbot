@@ -298,32 +298,27 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 	var maxLength int
 	var maxTokens int
 	var temperature float64
-	var stopWords []string
-
-	baseStopWords := []string{"\n\n", "Human:", "Assistant:", "System:"}
 
 	lengthVariation := random.Float(0.0, 1.0)
+	// OpenAI allows at most 4 stop sequences — stopWordsForVariation enforces that.
+	stopWords := stopWordsForVariation(lengthVariation)
 	switch {
 	case lengthVariation < 0.60: // Very short responses (60%) — single-line punchy reaction
 		maxLength = random.Int(10, 90)
 		maxTokens = 40
 		temperature = random.Float(0.7, 1.1)
-		stopWords = append(baseStopWords, "\n") // force single line
 	case lengthVariation < 0.85: // Short responses (25%)
 		maxLength = random.Int(60, 180)
 		maxTokens = 80
 		temperature = random.Float(0.6, 1.0)
-		stopWords = baseStopWords
 	case lengthVariation < 0.95: // Medium responses (10%)
 		maxLength = random.Int(150, 350)
 		maxTokens = 150
 		temperature = random.Float(0.7, 1.1)
-		stopWords = baseStopWords
 	default: // Longer responses (5%) — still not an essay
 		maxLength = random.Int(250, 500)
 		maxTokens = 200
 		temperature = random.Float(0.8, 1.2)
-		stopWords = baseStopWords
 	}
 
 	completion, err := a.ai.LLM().Call(ctx, content,
@@ -526,6 +521,16 @@ You're in a Slack chat. Keep replies SHORT — one sentence usually, two max. Ne
 	}
 
 	return result, nil
+}
+
+// stopWordsForVariation returns stop sequences for the given length-variation bucket.
+// OpenAI enforces a maximum of 4 stop sequences — this function must never exceed that.
+func stopWordsForVariation(v float64) []string {
+	if v < 0.60 {
+		// Single-line replies: "\n" already catches "\n\n", so we don't need both.
+		return []string{"\n", "Human:", "Assistant:", "System:"}
+	}
+	return []string{"\n\n", "Human:", "Assistant:", "System:"}
 }
 
 // calculateDropChance determines the probability of dropping a message based on engagement factors
