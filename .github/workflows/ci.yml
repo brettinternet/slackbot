@@ -119,8 +119,8 @@ jobs:
 
       - name: Build application
         run: |
-          go build -v ./cmd/bot
-          ./bot --help
+          go build -v -o ./bin/bot ./cmd/bot
+          ./bin/bot --help
 
       - name: Build Docker image
         run: |
