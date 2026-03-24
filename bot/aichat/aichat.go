@@ -4,6 +4,7 @@ package aichat
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,6 +21,14 @@ import (
 )
 
 const eventChannelSize = 10
+
+// roleLabelRE matches a leading role label that the model sometimes emits,
+// e.g. "AI:", "Assistant:", "SeniorDev:", "Grumpy Mentor:".
+// Constraints that prevent false positives:
+//   - At most two words (one optional space-separated word), each ≤ 20 chars
+//   - Words contain only letters/digits (no punctuation)
+//   - Must be followed by at least one space after the colon (rules out URLs like "https://")
+var roleLabelRE = regexp.MustCompile(`(?i)^[A-Za-z][A-Za-z0-9]{0,19}(?:\s[A-Za-z][A-Za-z0-9]{0,19})?\s*:\s+`)
 
 type aiService interface {
 	LLM() *openai.LLM
@@ -339,14 +348,9 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 		return
 	}
 
-	// Clean up the response to remove unwanted prefixes
+	// Strip any leading role label the model may emit (e.g. "AI:", "SeniorDev:", "Assistant:").
 	completion = strings.TrimSpace(completion)
-	if strings.HasPrefix(strings.ToLower(completion), "system:") {
-		completion = strings.TrimSpace(completion[7:]) // Remove "system:" prefix
-	}
-	if strings.HasPrefix(strings.ToLower(completion), "assistant:") {
-		completion = strings.TrimSpace(completion[10:]) // Remove "assistant:" prefix
-	}
+	completion = roleLabelRE.ReplaceAllLiteralString(completion, "")
 
 	msgOptions := []slack.MsgOption{
 		slack.MsgOptionText(completion, false),

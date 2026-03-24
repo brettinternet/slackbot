@@ -583,6 +583,42 @@ func TestAIChat_ProcessEvent_IgnoresMessageEventFromBot(t *testing.T) {
 	a.processEvent(nil, event) //nolint:staticcheck
 }
 
+// --- Role Label Stripping Tests ---
+
+func TestRoleLabelRE(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		// labels that must be stripped
+		{"AI: hey what's up", "hey what's up"},
+		{"Assistant: sure thing", "sure thing"},
+		{"SeniorDev: back in my day", "back in my day"},
+		{"Grumpy Mentor: kids these days", "kids these days"},
+		{"System: hello", "hello"},
+		{"Bot: yo", "yo"},
+		// extra whitespace after colon
+		{"AI:   lots of spaces", "lots of spaces"},
+		// normal messages that must NOT be stripped
+		{"no label here", "no label here"},
+		{"https://example.com is a URL", "https://example.com is a URL"},
+		{"just some text: with a colon mid-sentence", "just some text: with a colon mid-sentence"},
+		// single word > 20 chars should not be stripped
+		{"ThisIsWayTooLongLabel: text", "ThisIsWayTooLongLabel: text"},
+		// more than two words before colon should not be stripped
+		{"one two three: text", "one two three: text"},
+		// no space after colon (e.g. URLs) should not be stripped
+		{"Key:value", "Key:value"},
+	}
+
+	for _, tc := range cases {
+		got := strings.TrimSpace(roleLabelRE.ReplaceAllLiteralString(strings.TrimSpace(tc.input), ""))
+		if got != tc.want {
+			t.Errorf("input %q: got %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
 // --- Stop Word Limit Tests ---
 
 // TestAIChat_StopWords_NeverExceedOpenAILimit verifies that every length tier produces
