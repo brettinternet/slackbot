@@ -1,5 +1,8 @@
 # Slackbot
 
+[![CI](https://github.com/brettinternet/slackbot/actions/workflows/ci.yml/badge.svg)](https://github.com/brettinternet/slackbot/actions/workflows/ci.yml)
+[![Build](https://github.com/brettinternet/slackbot/actions/workflows/publish-bot.yaml/badge.svg)](https://github.com/brettinternet/slackbot/actions/workflows/publish-bot.yaml)
+
 Utilities for the workplace.
 
 ![slack bot notifications when user is removed or added](./demo.png)
