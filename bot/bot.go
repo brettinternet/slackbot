@@ -13,6 +13,7 @@ import (
 	"slackbot.arpa/bot/chat"
 	"slackbot.arpa/bot/config"
 	"slackbot.arpa/bot/http"
+	"slackbot.arpa/bot/showerthought"
 	"slackbot.arpa/bot/slack"
 	"slackbot.arpa/bot/user"
 	"slackbot.arpa/bot/vibecheck"
@@ -31,6 +32,7 @@ type Bot struct {
 	vibecheck     *vibecheck.Vibecheck
 	ai            *ai.AI
 	aichat        *aichat.AIChat
+	showerThought *showerthought.ShowerThought
 }
 
 func NewBot(buildOpts config.BuildOpts) *Bot {
@@ -160,6 +162,16 @@ func (s *Bot) initializeServices(ctx context.Context, currentConfig *config.Conf
 		} else {
 			s.log.Info("AI Chat service disabled - no personas configured")
 		}
+
+		// Only initialize showerthought if enabled and notify channel is set
+		stConfig := s.configManager.GetShowerthoughtConfig()
+		if stConfig.Enabled && stConfig.NotifyChannel != "" {
+			s.showerThought = showerthought.New(s.log, stConfig, s.slack, s.ai)
+			s.log.Info("Shower thought service initialized",
+				zap.String("channel", stConfig.NotifyChannel))
+		} else if stConfig.Enabled {
+			s.log.Warn("Shower thought service disabled - no notify channel configured")
+		}
 	} else {
 		s.log.Info("AI services disabled - no OpenAI API key provided")
 	}
@@ -237,6 +249,12 @@ func (s *Bot) Run(runCtx context.Context) error {
 		}
 	}
 
+	if s.showerThought != nil {
+		if err := s.showerThought.Start(runCtx); err != nil {
+			return fmt.Errorf("start showerthought: %w", err)
+		}
+	}
+
 	return s.http.Run(runCtx)
 }
 
@@ -261,6 +279,11 @@ func (s *Bot) Shutdown(ctx context.Context) error {
 	if s.aichat != nil {
 		if err := s.aichat.Stop(ctx); err != nil {
 			return fmt.Errorf("stop aichat: %w", err)
+		}
+	}
+	if s.showerThought != nil {
+		if err := s.showerThought.Stop(ctx); err != nil {
+			errs = errors.Join(errs, fmt.Errorf("stop showerthought: %w", err))
 		}
 	}
 	if s.userWatch != nil {

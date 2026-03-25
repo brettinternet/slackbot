@@ -3,6 +3,13 @@
 user:
   notify_channel: ""
 
+# Shower thought service configuration
+# Requires user.notify_channel and an OpenAI API key to be configured.
+showerthought:
+  enabled: false
+  business_hours_start: 8 # hour in 24h local time (inclusive)
+  business_hours_end: 15 # hour in 24h local time (exclusive)
+
 # AI Chat service configuration
 aichat:
   sticky_duration: 30m

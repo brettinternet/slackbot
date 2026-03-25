@@ -16,6 +16,7 @@ import (
 	"slackbot.arpa/bot/aichat"
 	"slackbot.arpa/bot/chat"
 	"slackbot.arpa/bot/http"
+	"slackbot.arpa/bot/showerthought"
 	"slackbot.arpa/bot/slack"
 	"slackbot.arpa/bot/user"
 	"slackbot.arpa/bot/vibecheck"
@@ -119,22 +120,27 @@ type configOpts struct {
 	VibecheckBanDuration time.Duration
 	// Chat responses
 	ChatResponses []chat.Response
+	// Showerthought
+	ShowerthoughtEnabled            bool
+	ShowerthoughtBusinessHoursStart int
+	ShowerthoughtBusinessHoursEnd   int
 }
 
 type Config struct {
-	Version     string
-	BuildTime   string
-	LogLevel    string
-	Environment Environment
-	DataDir     string
-	ConfigFile  string
-	Server      http.Config
-	Slack       slack.Config
-	User        user.Config
-	Chat        chat.Config
-	Vibecheck   vibecheck.Config
-	AI          ai.Config
-	AIChat      aichat.Config
+	Version       string
+	BuildTime     string
+	LogLevel      string
+	Environment   Environment
+	DataDir       string
+	ConfigFile    string
+	Server        http.Config
+	Slack         slack.Config
+	User          user.Config
+	Chat          chat.Config
+	Vibecheck     vibecheck.Config
+	AI            ai.Config
+	AIChat        aichat.Config
+	ShowerThought showerthought.Config
 }
 
 func newConfig(opts configOpts) (Config, error) {
@@ -207,6 +213,12 @@ func newConfig(opts configOpts) (Config, error) {
 			MaxContextMessages: opts.AIChatMaxContextMessages,
 			MaxContextAge:      opts.AIChatMaxContextAge,
 			MaxContextTokens:   opts.AIChatMaxContextTokens,
+		},
+		ShowerThought: showerthought.Config{
+			Enabled:            opts.ShowerthoughtEnabled,
+			NotifyChannel:      opts.UserNotifyChannel,
+			BusinessHoursStart: opts.ShowerthoughtBusinessHoursStart,
+			BusinessHoursEnd:   opts.ShowerthoughtBusinessHoursEnd,
 		},
 	}, nil
 }

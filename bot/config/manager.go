@@ -16,6 +16,7 @@ import (
 	"slackbot.arpa/bot/aichat"
 	"slackbot.arpa/bot/chat"
 	"slackbot.arpa/bot/http"
+	"slackbot.arpa/bot/showerthought"
 	"slackbot.arpa/bot/slack"
 	"slackbot.arpa/bot/user"
 	"slackbot.arpa/bot/vibecheck"
@@ -31,6 +32,7 @@ type ConfigProvider interface {
 	GetAIConfig() ai.Config
 	GetUserConfig() user.Config
 	GetHTTPConfig() http.Config
+	GetShowerthoughtConfig() showerthought.Config
 	Subscribe(callback func(*Config)) func() // Returns unsubscribe function
 	Close() error
 }
@@ -218,6 +220,15 @@ func (cm *ConfigManager) mergeConfigs(fileConfig *FileConfig) configOpts {
 	chatConfig := fileConfig.Chat
 	opts.ChatResponses = chatConfig.Responses
 
+	showerthoughtConfig := fileConfig.ShowerThought
+	if showerthoughtConfig.Enabled != nil {
+		opts.ShowerthoughtEnabled = *showerthoughtConfig.Enabled
+	}
+	opts.ShowerthoughtBusinessHoursStart = intWithFileAndOverride(
+		showerthoughtConfig.BusinessHoursStart, 9, nil)
+	opts.ShowerthoughtBusinessHoursEnd = intWithFileAndOverride(
+		showerthoughtConfig.BusinessHoursEnd, 17, nil)
+
 	return opts
 }
 
@@ -380,6 +391,14 @@ func (cm *ConfigManager) GetHTTPConfig() http.Config {
 		return http.Config{}
 	}
 	return config.Server
+}
+
+func (cm *ConfigManager) GetShowerthoughtConfig() showerthought.Config {
+	config := cm.GetConfig()
+	if config == nil {
+		return showerthought.Config{}
+	}
+	return config.ShowerThought
 }
 
 func (cm *ConfigManager) Subscribe(callback func(*Config)) func() {

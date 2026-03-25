@@ -204,7 +204,11 @@ func sendMessage(ctx context.Context, cmd *cli.Command, s *Bot) error {
 		if config == nil {
 			return fmt.Errorf("configuration is unavailable")
 		}
-		channels = config.Slack.PreferredChannels
+		if config.User.NotifyChannel != "" {
+			channels = []string{config.User.NotifyChannel}
+		} else {
+			channels = append(channels, config.Slack.PreferredChannels...)
+		}
 		if len(channels) == 0 {
 			return fmt.Errorf("no channels specified and no preferred channels configured")
 		}
