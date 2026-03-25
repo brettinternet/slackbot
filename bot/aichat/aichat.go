@@ -4,6 +4,7 @@ package aichat
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -17,6 +18,29 @@ import (
 	"golang.org/x/time/rate"
 	"slackbot.arpa/tools/random"
 )
+
+// slackContextMessage represents a message fetched from live Slack thread or channel history.
+type slackContextMessage struct {
+	Text      string
+	IsBot     bool
+	Timestamp time.Time // zero if unknown
+}
+
+// parseSlackTimestamp parses a Slack message timestamp string (e.g. "1512085950.000216") to time.Time.
+func parseSlackTimestamp(ts string) time.Time {
+	if ts == "" {
+		return time.Time{}
+	}
+	// Slack timestamps are "seconds.microseconds"; second precision is fine for context purposes.
+	if dot := strings.IndexByte(ts, '.'); dot > 0 {
+		ts = ts[:dot]
+	}
+	secs, err := strconv.ParseInt(ts, 10, 64)
+	if err != nil {
+		return time.Time{}
+	}
+	return time.Unix(secs, 0)
+}
 
 const eventChannelSize = 10
 
@@ -240,6 +264,90 @@ type eventMessage struct {
 	ThreadTimeStamp string
 }
 
+// fetchThreadContext retrieves all messages in a Slack thread for LLM context.
+// Returns messages in chronological order, excluding the triggering (last) message.
+// Thread messages are not age-filtered — the entire thread is always relevant context.
+func (a *AIChat) fetchThreadContext(ctx context.Context, channelID, threadTS string) []slackContextMessage {
+	client := a.slack.Client()
+	if client == nil {
+		return nil
+	}
+	msgs, _, _, err := client.GetConversationRepliesContext(ctx, &slack.GetConversationRepliesParameters{
+		ChannelID: channelID,
+		Timestamp: threadTS,
+		Limit:     25,
+	})
+	if err != nil {
+		a.log.Warn("Failed to fetch thread context", zap.String("channel", channelID), zap.Error(err))
+		return nil
+	}
+	if len(msgs) <= 1 {
+		// Only the parent message (or nothing) — no prior thread context
+		return nil
+	}
+	botID := a.slack.BotUserID()
+	// Exclude the last message — it's the one we're responding to
+	result := make([]slackContextMessage, 0, len(msgs)-1)
+	for _, msg := range msgs[:len(msgs)-1] {
+		if strings.TrimSpace(msg.Text) == "" {
+			continue
+		}
+		result = append(result, slackContextMessage{
+			Text:      msg.Text,
+			IsBot:     msg.User == botID || msg.BotID != "",
+			Timestamp: parseSlackTimestamp(msg.Timestamp),
+		})
+	}
+	return result
+}
+
+// fetchChannelContext retrieves recent messages from a Slack channel for LLM context.
+// Messages older than MaxContextAge (default 2h) are excluded via the Slack API's Oldest
+// filter so stale context never reaches the LLM.
+// Returns messages in chronological order, excluding the most recent (triggering) message.
+func (a *AIChat) fetchChannelContext(ctx context.Context, channelID string) []slackContextMessage {
+	client := a.slack.Client()
+	if client == nil {
+		return nil
+	}
+
+	maxAge := a.config.MaxContextAge
+	if maxAge == 0 {
+		maxAge = 2 * time.Hour
+	}
+	oldest := strconv.FormatInt(time.Now().Add(-maxAge).Unix(), 10)
+
+	history, err := client.GetConversationHistoryContext(ctx, &slack.GetConversationHistoryParameters{
+		ChannelID: channelID,
+		Oldest:    oldest,
+		Limit:     16, // fetch one extra so we can drop the triggering message
+	})
+	if err != nil {
+		a.log.Warn("Failed to fetch channel context", zap.String("channel", channelID), zap.Error(err))
+		return nil
+	}
+	msgs := history.Messages
+	if len(msgs) == 0 {
+		return nil
+	}
+	// Messages are newest-first; drop index 0 (the message we're responding to), then reverse
+	msgs = msgs[1:]
+	botID := a.slack.BotUserID()
+	result := make([]slackContextMessage, 0, len(msgs))
+	for i := len(msgs) - 1; i >= 0; i-- {
+		msg := msgs[i]
+		if strings.TrimSpace(msg.Text) == "" {
+			continue
+		}
+		result = append(result, slackContextMessage{
+			Text:      msg.Text,
+			IsBot:     msg.User == botID || msg.BotID != "",
+			Timestamp: parseSlackTimestamp(msg.Timestamp),
+		})
+	}
+	return result
+}
+
 // handleMessageEvent processes a message event and generates a response
 func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 	eventMessage := strings.TrimSpace(m.Text)
@@ -269,20 +377,31 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 
 	personaName := a.userPersona(m.UserID)
 
-	// Retrieve recent conversation context
+	// Fetch live Slack context for richer, thread-aware responses.
+	// For threads, the thread history IS the full conversation — use it directly and skip
+	// stored SQLite context (which is keyed per-user and would be redundant/noisy).
+	// For non-thread messages, fetch recent channel messages to understand the flow.
 	var recentContext []ConversationContext
-	if a.context != nil {
-		recentContext, err = a.context.GetRecentContext(m.UserID, m.Channel, personaName, &a.config)
-		if err != nil {
-			a.log.Warn("Failed to retrieve conversation context",
-				zap.String("user", m.UserID),
-				zap.String("channel", m.Channel),
-				zap.Error(err),
-			)
+	var liveContext []slackContextMessage
+
+	if m.ThreadTimeStamp != "" {
+		liveContext = a.fetchThreadContext(ctx, m.Channel, m.ThreadTimeStamp)
+		// Thread history provides full context; stored history would overlap
+	} else {
+		liveContext = a.fetchChannelContext(ctx, m.Channel)
+		if a.context != nil {
+			recentContext, err = a.context.GetRecentContext(m.UserID, m.Channel, personaName, &a.config)
+			if err != nil {
+				a.log.Warn("Failed to retrieve conversation context",
+					zap.String("user", m.UserID),
+					zap.String("channel", m.Channel),
+					zap.Error(err),
+				)
+			}
 		}
 	}
 
-	messages := a.buildMessages(m.Text, userDetails, personaName, recentContext)
+	messages := a.buildMessages(m.Text, userDetails, personaName, recentContext, liveContext)
 
 	// Weighted random length heavily favoring shorter responses
 	var maxTokens int
@@ -438,10 +557,27 @@ type UserDetails struct {
 	TZ        string
 }
 
+// formatContextAge formats a duration for display in the system prompt recency note.
+func formatContextAge(d time.Duration) string {
+	if d < time.Hour {
+		return fmt.Sprintf("%d minutes", int(d.Minutes()))
+	}
+	h := int(d.Hours())
+	m := int(d.Minutes()) % 60
+	if m == 0 {
+		return fmt.Sprintf("%d hours", h)
+	}
+	return fmt.Sprintf("%dh %dm", h, m)
+}
+
 // buildMessages constructs a properly typed chat message sequence for the LLM.
 // Using GenerateContent with structured messages (rather than Call with a flattened
 // string) ensures the model never emits role-label prefixes like "AI:" or "Assistant:".
-func (a *AIChat) buildMessages(input string, u UserDetails, personaName string, context []ConversationContext) []llms.MessageContent {
+//
+// liveContext contains messages fetched directly from Slack (thread or channel history)
+// and is placed first so the LLM sees the full conversational flow.
+// storedContext contains the bot's own conversation history with this user from SQLite.
+func (a *AIChat) buildMessages(input string, u UserDetails, personaName string, storedContext []ConversationContext, liveContext []slackContextMessage) []llms.MessageContent {
 	persona := a.config.Personas[personaName]
 	if persona == "" {
 		persona = personas[personaName]
@@ -450,17 +586,47 @@ func (a *AIChat) buildMessages(input string, u UserDetails, personaName string, 
 		}
 	}
 
-	conversationGuidance := ""
-	if len(context) > 0 {
-		recentMessages := 0
-		for _, ctx := range context {
+	// Determine conversation state for system prompt guidance
+	activeConvo := len(liveContext) > 0
+	hasBotResponses := false
+	var oldestLive time.Time
+
+	if !activeConvo {
+		for _, ctx := range storedContext {
 			if time.Since(ctx.Timestamp) < 10*time.Minute {
-				recentMessages++
+				activeConvo = true
+				break
 			}
 		}
-		if recentMessages >= 2 {
-			conversationGuidance = "\nConversation is active — build on what's been said, don't restart."
+	}
+	for _, msg := range liveContext {
+		if msg.IsBot {
+			hasBotResponses = true
 		}
+		if !msg.Timestamp.IsZero() && (oldestLive.IsZero() || msg.Timestamp.Before(oldestLive)) {
+			oldestLive = msg.Timestamp
+		}
+	}
+	if !hasBotResponses {
+		for _, ctx := range storedContext {
+			if ctx.Role == "assistant" {
+				hasBotResponses = true
+				break
+			}
+		}
+	}
+
+	guidance := ""
+	if activeConvo {
+		guidance += "\nConversation is active — build on what's been said, don't restart."
+	}
+	if hasBotResponses {
+		guidance += "\nDon't repeat a punchline, roast, or observation you've already made in this conversation."
+	}
+	// When context spans a significant window, signal that older messages carry less weight.
+	if !oldestLive.IsZero() && time.Since(oldestLive) > 30*time.Minute {
+		age := time.Since(oldestLive).Round(time.Minute)
+		guidance += fmt.Sprintf("\nContext spans up to %s back; weight recent messages more heavily than older ones.", formatContextAge(age))
 	}
 
 	nameHint := ""
@@ -473,15 +639,25 @@ func (a *AIChat) buildMessages(input string, u UserDetails, personaName string, 
 You're in a Slack chat. Keep replies SHORT — one sentence usually, two max. Never write paragraphs, lists, or essays. This is casual chat, not a support ticket.%s%s`,
 		persona,
 		nameHint,
-		conversationGuidance,
+		guidance,
 	)
 
 	messages := []llms.MessageContent{
 		llms.TextParts(llms.ChatMessageTypeSystem, systemPrompt),
 	}
 
-	// Add conversation history as properly typed turns
-	for _, ctx := range context {
+	// Add live Slack context (thread or recent channel messages) as typed turns.
+	// This gives the LLM the real conversational flow happening in Slack.
+	for _, msg := range liveContext {
+		if msg.IsBot {
+			messages = append(messages, llms.TextParts(llms.ChatMessageTypeAI, msg.Text))
+		} else {
+			messages = append(messages, llms.TextParts(llms.ChatMessageTypeHuman, msg.Text))
+		}
+	}
+
+	// Add stored conversation history (user-specific memory from past sessions).
+	for _, ctx := range storedContext {
 		switch ctx.Role {
 		case "human":
 			messages = append(messages, llms.TextParts(llms.ChatMessageTypeHuman, ctx.Message))

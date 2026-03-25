@@ -453,7 +453,7 @@ func TestAIChat_BuildMessages_ContainsPersona(t *testing.T) {
 		Personas: map[string]string{"testpersona": "YOU ARE THE TEST PERSONA"},
 	})
 
-	msgs := a.buildMessages("hello", UserDetails{}, "testpersona", nil)
+	msgs := a.buildMessages("hello", UserDetails{}, "testpersona", nil, nil)
 	if len(msgs) == 0 {
 		t.Fatal("expected at least one message")
 	}
@@ -466,7 +466,7 @@ func TestAIChat_BuildMessages_ContainsPersona(t *testing.T) {
 func TestAIChat_BuildMessages_FallsBackToHardcodedPersona(t *testing.T) {
 	a := newTestAIChat(t, Config{Personas: map[string]string{}})
 
-	msgs := a.buildMessages("hello", UserDetails{}, "glazer", nil)
+	msgs := a.buildMessages("hello", UserDetails{}, "glazer", nil, nil)
 	if len(msgs) == 0 {
 		t.Fatal("expected at least one message")
 	}
@@ -479,7 +479,7 @@ func TestAIChat_BuildMessages_FallsBackToHardcodedPersona(t *testing.T) {
 func TestAIChat_BuildMessages_FallsBackToGlazerWhenUnknown(t *testing.T) {
 	a := newTestAIChat(t, Config{Personas: map[string]string{}})
 
-	msgs := a.buildMessages("hello", UserDetails{}, "nonexistent_persona", nil)
+	msgs := a.buildMessages("hello", UserDetails{}, "nonexistent_persona", nil, nil)
 	if len(msgs) == 0 {
 		t.Fatal("expected at least one message")
 	}
@@ -494,7 +494,7 @@ func TestAIChat_BuildMessages_IncludesNameHint(t *testing.T) {
 		Personas: map[string]string{"p": "you are a test"},
 	})
 
-	msgs := a.buildMessages("hello", UserDetails{FirstName: "Alice"}, "p", nil)
+	msgs := a.buildMessages("hello", UserDetails{FirstName: "Alice"}, "p", nil, nil)
 	if len(msgs) == 0 {
 		t.Fatal("expected at least one message")
 	}
@@ -513,7 +513,7 @@ func TestAIChat_BuildMessages_IncludesContextAsTypedTurns(t *testing.T) {
 		{Role: "human", Message: "tell me a joke", Timestamp: time.Now().Add(-5 * time.Minute)},
 		{Role: "assistant", Message: "why did the chicken cross the road", Timestamp: time.Now().Add(-4 * time.Minute)},
 	}
-	msgs := a.buildMessages("that was bad", UserDetails{}, "p", ctx)
+	msgs := a.buildMessages("that was bad", UserDetails{}, "p", ctx, nil)
 
 	// Expect: system, human (ctx), AI (ctx), human (current) = 4 messages
 	if len(msgs) != 4 {
@@ -545,13 +545,248 @@ func TestAIChat_BuildMessages_ActiveConversationGuidance(t *testing.T) {
 		{Role: "assistant", Message: "reply1", Timestamp: time.Now().Add(-2 * time.Minute)},
 		{Role: "human", Message: "msg2", Timestamp: time.Now().Add(-1 * time.Minute)},
 	}
-	msgs := a.buildMessages("new message", UserDetails{}, "p", ctx)
+	msgs := a.buildMessages("new message", UserDetails{}, "p", ctx, nil)
 	if len(msgs) == 0 {
 		t.Fatal("expected at least one message")
 	}
 	systemContent := fmt.Sprintf("%v", msgs[0].Parts)
 	if !strings.Contains(systemContent, "active") {
 		t.Errorf("expected active conversation guidance in system message, got: %s", systemContent)
+	}
+}
+
+func TestAIChat_BuildMessages_LiveContextInserted(t *testing.T) {
+	a := newTestAIChat(t, Config{
+		Personas: map[string]string{"p": "you are a test"},
+	})
+
+	live := []slackContextMessage{
+		{Text: "thread message one", IsBot: false},
+		{Text: "bot replied here", IsBot: true},
+		{Text: "thread message two", IsBot: false},
+	}
+	msgs := a.buildMessages("current message", UserDetails{}, "p", nil, live)
+
+	// Expect: system + 3 live + 1 current = 5 messages
+	if len(msgs) != 5 {
+		t.Fatalf("expected 5 messages (system + 3 live + 1 current), got %d", len(msgs))
+	}
+	if msgs[1].Role != "human" {
+		t.Errorf("msgs[1] should be human (non-bot live msg), got %q", msgs[1].Role)
+	}
+	if msgs[2].Role != "ai" {
+		t.Errorf("msgs[2] should be ai (bot live msg), got %q", msgs[2].Role)
+	}
+	if msgs[3].Role != "human" {
+		t.Errorf("msgs[3] should be human (non-bot live msg), got %q", msgs[3].Role)
+	}
+	lastContent := fmt.Sprintf("%v", msgs[4].Parts)
+	if !strings.Contains(lastContent, "current message") {
+		t.Errorf("last message should be the current input, got: %s", lastContent)
+	}
+}
+
+func TestAIChat_BuildMessages_LiveContextBeforeStoredContext(t *testing.T) {
+	a := newTestAIChat(t, Config{
+		Personas: map[string]string{"p": "you are a test"},
+	})
+
+	live := []slackContextMessage{
+		{Text: "live msg", IsBot: false},
+	}
+	stored := []ConversationContext{
+		{Role: "human", Message: "stored msg", Timestamp: time.Now().Add(-5 * time.Minute)},
+	}
+	msgs := a.buildMessages("now", UserDetails{}, "p", stored, live)
+
+	// Expect: system, live human, stored human, current = 4
+	if len(msgs) != 4 {
+		t.Fatalf("expected 4 messages, got %d", len(msgs))
+	}
+	liveContent := fmt.Sprintf("%v", msgs[1].Parts)
+	storedContent := fmt.Sprintf("%v", msgs[2].Parts)
+	if !strings.Contains(liveContent, "live msg") {
+		t.Errorf("msgs[1] should be live context, got: %s", liveContent)
+	}
+	if !strings.Contains(storedContent, "stored msg") {
+		t.Errorf("msgs[2] should be stored context, got: %s", storedContent)
+	}
+}
+
+func TestAIChat_BuildMessages_AntiRepetitionWithBotLiveHistory(t *testing.T) {
+	a := newTestAIChat(t, Config{
+		Personas: map[string]string{"p": "you are a test"},
+	})
+
+	live := []slackContextMessage{
+		{Text: "user said something", IsBot: false},
+		{Text: "bot replied", IsBot: true},
+	}
+	msgs := a.buildMessages("another message", UserDetails{}, "p", nil, live)
+	if len(msgs) == 0 {
+		t.Fatal("expected messages")
+	}
+	systemContent := fmt.Sprintf("%v", msgs[0].Parts)
+	if !strings.Contains(systemContent, "Don't repeat") {
+		t.Errorf("expected anti-repetition guidance when bot has live history, got: %s", systemContent)
+	}
+}
+
+func TestAIChat_BuildMessages_AntiRepetitionWithStoredBotHistory(t *testing.T) {
+	a := newTestAIChat(t, Config{
+		Personas: map[string]string{"p": "you are a test"},
+	})
+
+	stored := []ConversationContext{
+		{Role: "assistant", Message: "I said this before", Timestamp: time.Now().Add(-5 * time.Minute)},
+	}
+	msgs := a.buildMessages("another message", UserDetails{}, "p", stored, nil)
+	if len(msgs) == 0 {
+		t.Fatal("expected messages")
+	}
+	systemContent := fmt.Sprintf("%v", msgs[0].Parts)
+	if !strings.Contains(systemContent, "Don't repeat") {
+		t.Errorf("expected anti-repetition guidance when bot has stored history, got: %s", systemContent)
+	}
+}
+
+func TestAIChat_BuildMessages_NoAntiRepetitionWithoutBotHistory(t *testing.T) {
+	a := newTestAIChat(t, Config{
+		Personas: map[string]string{"p": "you are a test"},
+	})
+
+	live := []slackContextMessage{
+		{Text: "user message only", IsBot: false},
+	}
+	msgs := a.buildMessages("first reply", UserDetails{}, "p", nil, live)
+	if len(msgs) == 0 {
+		t.Fatal("expected messages")
+	}
+	systemContent := fmt.Sprintf("%v", msgs[0].Parts)
+	if strings.Contains(systemContent, "Don't repeat") {
+		t.Errorf("should not have anti-repetition guidance when bot has no history, got: %s", systemContent)
+	}
+}
+
+func TestAIChat_BuildMessages_RecencyNoteWhenContextIsOld(t *testing.T) {
+	a := newTestAIChat(t, Config{
+		Personas: map[string]string{"p": "you are a test"},
+	})
+
+	live := []slackContextMessage{
+		{Text: "old message", IsBot: false, Timestamp: time.Now().Add(-45 * time.Minute)},
+		{Text: "newer message", IsBot: false, Timestamp: time.Now().Add(-5 * time.Minute)},
+	}
+	msgs := a.buildMessages("hi", UserDetails{}, "p", nil, live)
+	if len(msgs) == 0 {
+		t.Fatal("expected messages")
+	}
+	systemContent := fmt.Sprintf("%v", msgs[0].Parts)
+	if !strings.Contains(systemContent, "weight recent messages") {
+		t.Errorf("expected recency note when oldest context is >30 min old, got: %s", systemContent)
+	}
+}
+
+func TestAIChat_BuildMessages_NoRecencyNoteWhenContextIsRecent(t *testing.T) {
+	a := newTestAIChat(t, Config{
+		Personas: map[string]string{"p": "you are a test"},
+	})
+
+	live := []slackContextMessage{
+		{Text: "recent message", IsBot: false, Timestamp: time.Now().Add(-10 * time.Minute)},
+	}
+	msgs := a.buildMessages("hi", UserDetails{}, "p", nil, live)
+	if len(msgs) == 0 {
+		t.Fatal("expected messages")
+	}
+	systemContent := fmt.Sprintf("%v", msgs[0].Parts)
+	if strings.Contains(systemContent, "weight recent messages") {
+		t.Errorf("should not have recency note when all context is recent, got: %s", systemContent)
+	}
+}
+
+func TestAIChat_BuildMessages_NoRecencyNoteWhenNoTimestamps(t *testing.T) {
+	a := newTestAIChat(t, Config{
+		Personas: map[string]string{"p": "you are a test"},
+	})
+
+	// Messages with zero timestamps should not trigger recency note
+	live := []slackContextMessage{
+		{Text: "message without timestamp", IsBot: false},
+	}
+	msgs := a.buildMessages("hi", UserDetails{}, "p", nil, live)
+	if len(msgs) == 0 {
+		t.Fatal("expected messages")
+	}
+	systemContent := fmt.Sprintf("%v", msgs[0].Parts)
+	if strings.Contains(systemContent, "weight recent messages") {
+		t.Errorf("should not have recency note when timestamps are zero, got: %s", systemContent)
+	}
+}
+
+func TestParseSlackTimestamp(t *testing.T) {
+	tests := []struct {
+		input    string
+		wantZero bool
+		wantSecs int64
+	}{
+		{"1512085950.000216", false, 1512085950},
+		{"1512085950", false, 1512085950},
+		{"", true, 0},
+		{"notanumber", true, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := parseSlackTimestamp(tt.input)
+			if tt.wantZero && !got.IsZero() {
+				t.Errorf("expected zero time for %q, got %v", tt.input, got)
+			}
+			if !tt.wantZero {
+				if got.IsZero() {
+					t.Errorf("expected non-zero time for %q", tt.input)
+				}
+				if got.Unix() != tt.wantSecs {
+					t.Errorf("for %q: want unix %d, got %d", tt.input, tt.wantSecs, got.Unix())
+				}
+			}
+		})
+	}
+}
+
+func TestFormatContextAge(t *testing.T) {
+	tests := []struct {
+		d    time.Duration
+		want string
+	}{
+		{45 * time.Minute, "45 minutes"},
+		{1 * time.Hour, "1 hours"},
+		{2 * time.Hour, "2 hours"},
+		{90 * time.Minute, "1h 30m"},
+		{150 * time.Minute, "2h 30m"},
+	}
+	for _, tt := range tests {
+		got := formatContextAge(tt.d)
+		if got != tt.want {
+			t.Errorf("formatContextAge(%v) = %q, want %q", tt.d, got, tt.want)
+		}
+	}
+}
+
+func TestAIChat_BuildMessages_ActiveConvoFromLiveContext(t *testing.T) {
+	a := newTestAIChat(t, Config{
+		Personas: map[string]string{"p": "you are a test"},
+	})
+
+	live := []slackContextMessage{
+		{Text: "some live message", IsBot: false},
+	}
+	msgs := a.buildMessages("message", UserDetails{}, "p", nil, live)
+	if len(msgs) == 0 {
+		t.Fatal("expected messages")
+	}
+	systemContent := fmt.Sprintf("%v", msgs[0].Parts)
+	if !strings.Contains(systemContent, "active") {
+		t.Errorf("expected active conversation guidance when live context present, got: %s", systemContent)
 	}
 }
 
