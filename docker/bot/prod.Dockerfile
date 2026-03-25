@@ -1,12 +1,10 @@
-ARG BUILDER_IMAGE_VERSION=1.25-alpine3.21
-FROM golang:${BUILDER_IMAGE_VERSION} AS builder
+ARG BUILDER_IMAGE_VERSION=1.25-alpine3.23
+FROM --platform=$BUILDPLATFORM golang:${BUILDER_IMAGE_VERSION} AS builder
 
 WORKDIR /app
 
-RUN apk add --no-cache gcc musl-dev
-
 COPY go.mod go.sum ./
-RUN --mount=type=cache,target=/go/pkg/mod \
+RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
     go mod download
 
 COPY . .
@@ -14,9 +12,13 @@ COPY . .
 ARG BUILD_ENVIRONMENT="production"
 ARG BUILD_VERSION="nightly"
 ARG BUILD_TIME="unknown"
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
+ARG TARGETOS
+ARG TARGETARCH
+
+RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
+    --mount=type=cache,target=/root/.cache/go-build,id=go-build-${TARGETARCH} \
     mkdir -p ./bin && \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -ldflags "-s -w \
     -X main.buildVersion=${BUILD_VERSION} \
     -X main.buildTime=${BUILD_TIME} \
@@ -26,7 +28,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 # ---
 
-FROM alpine:3.21
+FROM alpine:3.23
 
 # For fsnotify
 RUN apk add --no-cache inotify-tools
