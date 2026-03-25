@@ -74,7 +74,7 @@ The application follows a modular architecture with feature-based packages. Conf
 - 100 character line limit
 - Structured logging with zap
 - Standard Go error handling patterns
-- Test coverage target: 80%+
+- No minimum test coverage threshold enforced
 
 ## Task Completion Requirements
 

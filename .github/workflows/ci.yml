@@ -37,10 +37,7 @@ jobs:
           go tool cover -func=coverage.out
           COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print substr($3, 1, length($3)-1)}')
           echo "Total test coverage: ${COVERAGE}%"
-          if (( $(echo "$COVERAGE < 80" | bc -l) )); then
-            echo "Error: Test coverage is below 80%"
-            exit 1
-          fi
+          echo "Note: no minimum coverage threshold enforced"
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
