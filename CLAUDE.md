@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Slackbot is a Go application providing workplace utilities for Slack organizations, including user monitoring, AI chat, vibecheck functionality, and automated responses. Built with Go 1.24.2 using the Slack Go SDK and OpenAI integration via LangChain.
+Slackbot is a Go application providing workplace utilities for Slack organizations, including user monitoring, AI chat, vibecheck functionality, and automated responses. Built with Go using the Slack Go SDK and OpenAI integration via LangChain.
 
 ## Development Commands
 

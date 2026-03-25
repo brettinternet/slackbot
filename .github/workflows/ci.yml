@@ -10,17 +10,15 @@ jobs:
     if: "!contains(github.event.head_commit.message, 'skipci')"
     name: Test
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        go-version: [1.25.x]
     steps:
       - name: Check out code
         uses: actions/checkout@v4
 
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
-          go-version: ${{ matrix.go-version }}
+          go-version: 1.26.x
+          cache: true
 
       - name: Install Task
         uses: arduino/setup-task@v2
@@ -28,26 +26,13 @@ jobs:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Cache Go modules
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ matrix.go-version }}-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-${{ matrix.go-version }}-
-
       - name: Install dependencies
         run: |
           task bot:setup
-          go install gotest.tools/gotestsum@latest
+          go install gotest.tools/gotestsum@v1.12.0
 
       - name: Run tests
         run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
-
-      - name: Run tests with verbose output
-        run: task test
 
       - name: Check test coverage
         run: |
@@ -55,11 +40,12 @@ jobs:
           COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print substr($3, 1, length($3)-1)}')
           echo "Total test coverage: ${COVERAGE}%"
           if (( $(echo "$COVERAGE < 80" | bc -l) )); then
-            echo "Warning: Test coverage is below 80%"
+            echo "Error: Test coverage is below 80%"
+            exit 1
           fi
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v4
         with:
           file: ./coverage.out
           flags: unittests
@@ -75,9 +61,10 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
-          go-version: 1.25.x
+          go-version: 1.26.x
+          cache: true
 
       - name: Install Task
         uses: arduino/setup-task@v2
@@ -90,10 +77,10 @@ jobs:
 
       - name: Install required tools
         run: |
-          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-          go install github.com/securego/gosec/v2/cmd/gosec@latest
-          go install github.com/kisielk/errcheck@latest
-          go install github.com/zricethezav/gitleaks/v8@latest
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+          go install github.com/securego/gosec/v2/cmd/gosec@v2.21.4
+          go install github.com/kisielk/errcheck@v1.8.0
+          go install github.com/zricethezav/gitleaks/v8@v8.21.2
 
       - name: Install dprint
         run: |
@@ -113,9 +100,10 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
-          go-version: 1.25.x
+          go-version: 1.26.x
+          cache: true
 
       - name: Build application
         run: |
@@ -136,9 +124,10 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
-          go-version: 1.25.x
+          go-version: 1.26.x
+          cache: true
 
       - name: Run benchmarks
         run: |
