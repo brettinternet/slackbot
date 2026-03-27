@@ -15,7 +15,7 @@ mise.local.toml
 
 # AI
 .serena
-CLAUDE.local.md
+AGENTS.local.md
 .claude/settings.local.json
 
 # Go
