@@ -1,6 +1,6 @@
 [tools]
 bun = "latest"
-dotenv = "latest"
+dotenvx = "latest"
 dprint = "latest"
 direnv = "latest"
 go = "latest"

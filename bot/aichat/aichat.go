@@ -370,9 +370,9 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 	}
 	var userDetails UserDetails
 	if user != nil {
-		userDetails = UserDetails{FirstName: user.Profile.FirstName, LastName: user.Profile.LastName, TZ: user.TZ}
+		userDetails = UserDetails{UserID: m.UserID, FirstName: user.Profile.FirstName, LastName: user.Profile.LastName, TZ: user.TZ}
 	} else {
-		userDetails = UserDetails{Username: m.Username}
+		userDetails = UserDetails{UserID: m.UserID, Username: m.Username}
 	}
 
 	personaName := a.userPersona(m.UserID)
@@ -451,6 +451,12 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 	}
 
 	completion := strings.TrimSpace(resp.Choices[0].Content)
+
+	// Strip any self-mentions the LLM may have generated.
+	if botID := a.slack.BotUserID(); botID != "" {
+		completion = strings.ReplaceAll(completion, fmt.Sprintf("<@%s>", botID), "")
+		completion = strings.TrimSpace(completion)
+	}
 
 	msgOptions := []slack.MsgOption{
 		slack.MsgOptionText(completion, false),
@@ -551,6 +557,7 @@ func (a *AIChat) randomPersonaName() string {
 }
 
 type UserDetails struct {
+	UserID    string
 	Username  string
 	FirstName string
 	LastName  string
@@ -629,16 +636,37 @@ func (a *AIChat) buildMessages(input string, u UserDetails, personaName string, 
 		guidance += fmt.Sprintf("\nContext spans up to %s back; weight recent messages more heavily than older ones.", formatContextAge(age))
 	}
 
+	// Identify the person we're replying to.
+	targetName := u.FirstName
+	if targetName == "" {
+		targetName = u.Username
+	}
+
+	targetHint := ""
+	if targetName != "" {
+		targetHint = fmt.Sprintf(" You are responding to %s's message specifically — that's who your reply is for.", targetName)
+	}
+
 	nameHint := ""
 	if u.FirstName != "" {
-		nameHint = fmt.Sprintf(" You know their name is %s — use it occasionally, not every message.", u.FirstName)
+		nameHint = fmt.Sprintf(" Use their name (%s) occasionally, not every message.", u.FirstName)
+	}
+
+	mentionHint := ""
+	if u.UserID != "" {
+		mentionHint = fmt.Sprintf(
+			"\nOccasionally (not every message) you may @-reply using <@%s> — but only when it feels natural, like kicking off a direct reaction. Most replies should NOT start with a mention. Never @mention anyone else from the context.",
+			u.UserID,
+		)
 	}
 
 	systemPrompt := fmt.Sprintf(`%s
 
-You're in a Slack chat. Keep replies SHORT — one sentence usually, two max. Never write paragraphs, lists, or essays. This is casual chat, not a support ticket.%s%s`,
+You're in a Slack chat. Keep replies SHORT — one sentence usually, two max. Never write paragraphs, lists, or essays. This is casual chat, not a support ticket. Be funny, absurd, or very wise.%s%s%s%s`,
 		persona,
+		targetHint,
 		nameHint,
+		mentionHint,
 		guidance,
 	)
 
