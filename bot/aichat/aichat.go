@@ -413,24 +413,24 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 	switch {
 	case lengthVariation < 0.60: // Very short responses (60%) — single-line punchy reaction
 		maxTokens = 40
-		temperature = random.Float(0.7, 1.1)
+		temperature = random.Float(1.5, 2.0)
 	case lengthVariation < 0.85: // Short responses (25%)
 		maxTokens = 80
-		temperature = random.Float(0.6, 1.0)
+		temperature = random.Float(1.0, 1.8)
 	case lengthVariation < 0.95: // Medium responses (10%)
 		maxTokens = 150
-		temperature = random.Float(0.7, 1.1)
+		temperature = random.Float(0.9, 1.5)
 	default: // Longer responses (5%) — still not an essay
 		maxTokens = 200
-		temperature = random.Float(0.8, 1.2)
+		temperature = random.Float(0.8, 2.0)
 	}
 
 	resp, err := a.ai.LLM().GenerateContent(ctx, messages,
 		llms.WithTemperature(temperature),
 		llms.WithMaxTokens(maxTokens),
 		llms.WithTopP(0.9),
-		llms.WithFrequencyPenalty(0.6),
-		llms.WithPresencePenalty(0.3),
+		llms.WithFrequencyPenalty(1.0),
+		llms.WithPresencePenalty(0.6),
 		llms.WithStopWords(stopWords))
 	if err != nil {
 		a.log.Error("Failed to generate content",
