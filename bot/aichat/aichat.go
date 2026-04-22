@@ -195,9 +195,6 @@ func (a *AIChat) processEvent(ctx context.Context, event slackevents.EventsAPIEv
 			if ev.BotID != "" || ev.User == "" {
 				return
 			}
-			if !a.mentionLimiter.Allow() {
-				return
-			}
 			a.handleMessageEvent(ctx, eventMessage{
 				UserID:          ev.User,
 				Channel:         ev.Channel,
@@ -228,17 +225,7 @@ func (a *AIChat) processEvent(ctx context.Context, event slackevents.EventsAPIEv
 			}
 			// Check if bot is mentioned - this is a fallback for mentions that didn't trigger AppMentionEvent
 			isMentioned := a.isBotMentioned(ev.Text)
-			if isMentioned {
-				// Use mention rate limiter for direct mentions (fallback case)
-				if !a.mentionLimiter.Allow() {
-					a.log.Debug("Mention rate limit exceeded for MessageEvent fallback",
-						zap.String("user", ev.User),
-						zap.String("channel", ev.Channel),
-						zap.String("text", ev.Text),
-					)
-					return
-				}
-			} else {
+			if !isMentioned {
 				// Calculate engagement probability based on recent conversation
 				dropChance := a.calculateDropChance(ev.User, ev.Channel, ev.Text)
 				if random.Bool(dropChance) {
@@ -413,13 +400,13 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 	switch {
 	case lengthVariation < 0.60: // Very short responses (60%) — single-line punchy reaction
 		maxTokens = 40
-		temperature = random.Float(1.5, 2.0)
+		temperature = random.Float(0.6, 1.8)
 	case lengthVariation < 0.85: // Short responses (25%)
 		maxTokens = 80
-		temperature = random.Float(1.0, 1.8)
+		temperature = random.Float(0.5, 1.5)
 	case lengthVariation < 0.95: // Medium responses (10%)
 		maxTokens = 150
-		temperature = random.Float(0.9, 1.5)
+		temperature = random.Float(0.9, 2.0)
 	default: // Longer responses (5%) — still not an essay
 		maxTokens = 200
 		temperature = random.Float(0.8, 2.0)
