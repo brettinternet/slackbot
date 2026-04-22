@@ -21,9 +21,11 @@ import (
 
 // slackContextMessage represents a message fetched from live Slack thread or channel history.
 type slackContextMessage struct {
-	Text      string
-	IsBot     bool
-	Timestamp time.Time // zero if unknown
+	Text       string
+	IsBot      bool
+	Timestamp  time.Time // zero if unknown
+	SenderID   string    // Slack user ID for non-bot messages
+	SenderName string    // resolved first name, populated after fetch
 }
 
 // parseSlackTimestamp parses a Slack message timestamp string (e.g. "1512085950.000216") to time.Time.
@@ -279,10 +281,12 @@ func (a *AIChat) fetchThreadContext(ctx context.Context, channelID, threadTS str
 		if strings.TrimSpace(msg.Text) == "" {
 			continue
 		}
+		isBot := msg.User == botID || msg.BotID != ""
 		result = append(result, slackContextMessage{
 			Text:      msg.Text,
-			IsBot:     msg.User == botID || msg.BotID != "",
+			IsBot:     isBot,
 			Timestamp: parseSlackTimestamp(msg.Timestamp),
+			SenderID:  msg.User,
 		})
 	}
 	return result
@@ -326,10 +330,12 @@ func (a *AIChat) fetchChannelContext(ctx context.Context, channelID string) []sl
 		if strings.TrimSpace(msg.Text) == "" {
 			continue
 		}
+		isBot := msg.User == botID || msg.BotID != ""
 		result = append(result, slackContextMessage{
 			Text:      msg.Text,
-			IsBot:     msg.User == botID || msg.BotID != "",
+			IsBot:     isBot,
 			Timestamp: parseSlackTimestamp(msg.Timestamp),
+			SenderID:  msg.User,
 		})
 	}
 	return result
@@ -384,6 +390,15 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 					zap.String("channel", m.Channel),
 					zap.Error(err),
 				)
+			}
+		}
+	}
+
+	if len(liveContext) > 0 {
+		resolver := newUserNameResolver(a.config.DataDir, a.slack.Client(), a.log)
+		for i := range liveContext {
+			if !liveContext[i].IsBot && liveContext[i].SenderID != "" {
+				liveContext[i].SenderName = resolver.resolve(ctx, liveContext[i].SenderID)
 			}
 		}
 	}
@@ -667,7 +682,11 @@ You're in a Slack chat. Keep replies SHORT — one sentence usually, two max. Ne
 		if msg.IsBot {
 			messages = append(messages, llms.TextParts(llms.ChatMessageTypeAI, msg.Text))
 		} else {
-			messages = append(messages, llms.TextParts(llms.ChatMessageTypeHuman, msg.Text))
+			text := msg.Text
+			if msg.SenderName != "" {
+				text = "[" + msg.SenderName + "]: " + text
+			}
+			messages = append(messages, llms.TextParts(llms.ChatMessageTypeHuman, text))
 		}
 	}
 
