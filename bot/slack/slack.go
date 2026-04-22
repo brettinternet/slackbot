@@ -56,7 +56,7 @@ func (s *Slack) Start(ctx context.Context) error {
 	}
 
 	if err := s.client.SetUserPresenceContext(ctx, "auto"); err != nil {
-		return fmt.Errorf("user presence auto: %w", err)
+		s.log.Warn("Failed to set user presence to auto", zap.Error(err))
 	}
 
 	for _, channel := range s.config.PreferredChannels {
