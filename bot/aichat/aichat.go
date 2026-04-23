@@ -415,16 +415,16 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 	switch {
 	case lengthVariation < 0.60: // Very short responses (60%) — single-line punchy reaction
 		maxTokens = 40
-		temperature = random.Float(0.6, 1.8)
+		temperature = random.Float(0.3, 1.5)
 	case lengthVariation < 0.85: // Short responses (25%)
 		maxTokens = 80
-		temperature = random.Float(0.5, 1.5)
+		temperature = random.Float(0.3, 1.2)
 	case lengthVariation < 0.95: // Medium responses (10%)
 		maxTokens = 150
-		temperature = random.Float(0.9, 2.0)
+		temperature = random.Float(0.1, 2.0)
 	default: // Longer responses (5%) — still not an essay
 		maxTokens = 200
-		temperature = random.Float(0.8, 2.0)
+		temperature = random.Float(0.1, 1.5)
 	}
 
 	resp, err := a.ai.LLM().GenerateContent(ctx, messages,
@@ -683,7 +683,7 @@ You're in a Slack chat. Keep replies SHORT — one sentence usually, two max. Ne
 			messages = append(messages, llms.TextParts(llms.ChatMessageTypeAI, msg.Text))
 		} else {
 			text := msg.Text
-			if msg.SenderName != "" {
+			if msg.SenderName != "" && msg.SenderID != u.UserID {
 				text = "[" + msg.SenderName + "]: " + text
 			}
 			messages = append(messages, llms.TextParts(llms.ChatMessageTypeHuman, text))
