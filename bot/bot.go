@@ -158,7 +158,11 @@ func (s *Bot) initializeServices(ctx context.Context, currentConfig *config.Conf
 		aichatConfig := s.configManager.GetAIChatConfig()
 		if len(aichatConfig.Personas) > 0 {
 			s.aichat = aichat.NewAIChat(s.log, aichatConfig, s.slack, s.ai)
-			s.log.Info("AI Chat service initialized", zap.Int("personas", len(aichatConfig.Personas)))
+			personaKeys := make([]string, 0, len(aichatConfig.Personas))
+			for k := range aichatConfig.Personas {
+				personaKeys = append(personaKeys, k)
+			}
+			s.log.Info("AI Chat service initialized", zap.Strings("personas", personaKeys))
 		} else {
 			s.log.Info("AI Chat service disabled - no personas configured")
 		}
