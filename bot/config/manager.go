@@ -65,6 +65,7 @@ type CLIOverrides struct {
 	MaxContextMessages     *int
 	MaxContextAge          *time.Duration
 	MaxContextTokens       *int
+	AIChatRateLimitEnabled *bool
 
 	// Vibecheck settings
 	VibecheckBanDuration *time.Duration
@@ -212,6 +213,8 @@ func (cm *ConfigManager) mergeConfigs(fileConfig *FileConfig) configOpts {
 		aichatConfig.MaxContextAge, 24*time.Hour, cm.cliOverrides.MaxContextAge)
 	opts.AIChatMaxContextTokens = intWithFileAndOverride(
 		aichatConfig.MaxContextTokens, 2000, cm.cliOverrides.MaxContextTokens)
+	opts.AIChatRateLimitEnabled = boolWithFileAndOverride(
+		aichatConfig.RateLimitEnabled, true, cm.cliOverrides.AIChatRateLimitEnabled)
 
 	vibecheckConfig := fileConfig.Vibecheck
 	opts.VibecheckBanDuration = durationWithFileAndOverride(
@@ -504,6 +507,10 @@ func ExtractCLIOverrides(cmd *cli.Command) *CLIOverrides {
 		val := cmd.Int("aichat-max-context-tokens")
 		overrides.MaxContextTokens = &val
 	}
+	if cmd.IsSet("aichat-rate-limit-enabled") {
+		val := cmd.Bool("aichat-rate-limit-enabled")
+		overrides.AIChatRateLimitEnabled = &val
+	}
 	if cmd.IsSet("vibecheck-ban-duration") {
 		val := cmd.Duration("vibecheck-ban-duration")
 		overrides.VibecheckBanDuration = &val
@@ -551,6 +558,16 @@ func intWithFileAndOverride(fileValue *int, defaultValue int, override *int) int
 		return *fileValue
 	}
 	// Use default value
+	return defaultValue
+}
+
+func boolWithFileAndOverride(fileValue *bool, defaultValue bool, override *bool) bool {
+	if override != nil {
+		return *override
+	}
+	if fileValue != nil {
+		return *fileValue
+	}
 	return defaultValue
 }
 

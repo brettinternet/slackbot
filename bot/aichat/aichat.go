@@ -60,6 +60,7 @@ type FileConfig struct {
 	MaxContextMessages *int              `json:"max_context_messages" yaml:"max_context_messages"`
 	MaxContextAge      *time.Duration    `json:"max_context_age" yaml:"max_context_age"`
 	MaxContextTokens   *int              `json:"max_context_tokens" yaml:"max_context_tokens"`
+	RateLimitEnabled   *bool             `json:"rate_limit_enabled" yaml:"rate_limit_enabled"`
 	Personas           map[string]string `json:"personas" yaml:"personas"`
 }
 
@@ -70,6 +71,7 @@ type Config struct {
 	MaxContextMessages int           // Maximum number of messages to include in context
 	MaxContextAge      time.Duration // Maximum age of messages to include in context
 	MaxContextTokens   int           // Approximate maximum tokens for context (rough estimate)
+	RateLimitEnabled   bool          // When false, the eventlimiter is bypassed entirely
 }
 
 type personaAssignment struct {
@@ -87,7 +89,6 @@ type AIChat struct {
 	eventsCh       chan slackevents.EventsAPIEvent
 	isConnected    atomic.Bool
 	eventlimiter   *rate.Limiter
-	mentionLimiter *rate.Limiter
 	stickyPersonas map[string]personaAssignment // userID -> personaAssignment
 	mutex          sync.Mutex
 }
@@ -107,7 +108,6 @@ func NewAIChat(log *zap.Logger, c Config, s slackService, a aiService) *AIChat {
 		ai:             a,
 		context:        contextStorage,
 		eventlimiter:   rate.NewLimiter(rate.Every(3*time.Minute), 5),
-		mentionLimiter: rate.NewLimiter(rate.Every(1*time.Minute), 3),
 		stickyPersonas: make(map[string]personaAssignment),
 		stopCh:         make(chan struct{}),
 		eventsCh:       make(chan slackevents.EventsAPIEvent, eventChannelSize),
@@ -216,7 +216,7 @@ func (a *AIChat) processEvent(ctx context.Context, event slackevents.EventsAPIEv
 			if ev.BotID != "" || ev.User == "" {
 				return
 			}
-			if !a.eventlimiter.Allow() {
+			if a.config.RateLimitEnabled && !a.eventlimiter.Allow() {
 				a.log.Debug("Rate limit exceeded, dropping event",
 					zap.String("user", ev.User),
 					zap.String("channel", ev.Channel),

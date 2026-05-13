@@ -13,6 +13,8 @@ showerthought:
 # AI Chat service configuration
 aichat:
   sticky_duration: 30m
+  # Rate-limit non-mention messages. Set to false to let the bot respond to every message.
+  rate_limit_enabled: true
   # Context limits to prevent token overflow
   max_context_messages: 10 # Maximum number of previous messages to include
   max_context_age: 24h # Maximum age of messages to include

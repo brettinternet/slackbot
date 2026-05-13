@@ -41,7 +41,6 @@ func newTestAIChat(t *testing.T, cfg Config) *AIChat {
 		slack:          &mockSlack{botUserID: "UBOTID"},
 		ai:             &mockAI{},
 		eventlimiter:   rate.NewLimiter(rate.Inf, 1000),
-		mentionLimiter: rate.NewLimiter(rate.Inf, 1000),
 		stickyPersonas: make(map[string]personaAssignment),
 		stopCh:         make(chan struct{}),
 		eventsCh:       make(chan slackevents.EventsAPIEvent, eventChannelSize),

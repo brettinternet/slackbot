@@ -183,6 +183,15 @@ func Flags() []cli.Flag {
 				yaml.YAML("aichat.max_context_tokens", altsrc.NewStringPtrSourcer(&configFile)),
 			),
 		},
+		&cli.BoolFlag{
+			Name:  "aichat-rate-limit-enabled",
+			Usage: "Rate-limit non-mention messages in AI chat. Disable to let the bot respond to every message.",
+			Value: true,
+			Sources: cli.NewValueSourceChain(
+				cli.EnvVar("AICHAT_RATE_LIMIT_ENABLED"),
+				yaml.YAML("aichat.rate_limit_enabled", altsrc.NewStringPtrSourcer(&configFile)),
+			),
+		},
 		&cli.DurationFlag{
 			Name:  "vibecheck-ban-duration",
 			Usage: "Duration to ban users for when they fail a vibecheck.",

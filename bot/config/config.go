@@ -116,6 +116,7 @@ type configOpts struct {
 	AIChatMaxContextMessages int
 	AIChatMaxContextAge      time.Duration
 	AIChatMaxContextTokens   int
+	AIChatRateLimitEnabled   bool
 	// Vibecheck ban duration
 	VibecheckBanDuration time.Duration
 	// Chat responses
@@ -213,6 +214,7 @@ func newConfig(opts configOpts) (Config, error) {
 			MaxContextMessages: opts.AIChatMaxContextMessages,
 			MaxContextAge:      opts.AIChatMaxContextAge,
 			MaxContextTokens:   opts.AIChatMaxContextTokens,
+			RateLimitEnabled:   opts.AIChatRateLimitEnabled,
 		},
 		ShowerThought: showerthought.Config{
 			Enabled:            opts.ShowerthoughtEnabled,
