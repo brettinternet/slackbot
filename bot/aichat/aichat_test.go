@@ -338,6 +338,18 @@ func TestAIChat_IsBotMentioned(t *testing.T) {
 		{"nothing here", false},
 		{"<@OTHERID> do this", false},
 		{"", false},
+		// Literal word "bot" counts as a mention
+		{"hey bot what's up", true},
+		{"BOT respond please", true},
+		{"@bot help me", true},
+		{"can you do this, bot?", true},
+		{"talk to the Bot!", true},
+		{"<@OTHERID> ask the bot", true},
+		// Word-like substrings should NOT match
+		{"robot is here", false},
+		{"bottom line", false},
+		{"abbott was a person", false},
+		{"reboot the server", false},
 	}
 	for _, tt := range tests {
 		if got := a.isBotMentioned(tt.text); got != tt.want {
@@ -350,9 +362,11 @@ func TestAIChat_IsBotMentioned_EmptyBotID(t *testing.T) {
 	a := newTestAIChat(t, Config{})
 	a.slack = &mockSlack{botUserID: ""}
 
-	// Should return false when bot user ID is unknown
 	if a.isBotMentioned("<@UBOTID> yo") {
-		t.Error("expected false when botUserID is empty")
+		t.Error("expected false for Slack mention when botUserID is empty")
+	}
+	if !a.isBotMentioned("@bot help") {
+		t.Error("expected true for word 'bot' even when botUserID is empty")
 	}
 }
 
@@ -360,10 +374,9 @@ func TestAIChat_IsBotMentioned_EmptyBotID(t *testing.T) {
 
 func TestAIChat_CalculateDropChance_BaseRate(t *testing.T) {
 	a := newTestAIChat(t, Config{})
-	// No context storage, neutral message → base drop chance 0.4
 	got := a.calculateDropChance("U1", "C1", "just a normal message here")
-	if got != 0.4 {
-		t.Errorf("expected base drop chance 0.4, got %f", got)
+	if got != 0.25 {
+		t.Errorf("expected base drop chance 0.25, got %f", got)
 	}
 }
 

@@ -4,6 +4,7 @@ package aichat
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -168,16 +169,22 @@ func (a *AIChat) handleEvents(ctx context.Context) {
 	}
 }
 
-// isBotMentioned checks if the bot is mentioned in the message text
+// botWordPattern matches the literal word "bot" (case-insensitive) with word
+// boundaries. Triggers on "bot", "@bot", "Bot,", "BOT!" — but not on substrings
+// like "robot", "bottom", or Slack user IDs like "UBOTID".
+var botWordPattern = regexp.MustCompile(`(?i)\bbot\b`)
+
+// isBotMentioned checks if the bot is mentioned in the message text — either via
+// a proper Slack @-mention (<@USERID>) or by the literal word "bot".
 func (a *AIChat) isBotMentioned(text string) bool {
+	if botWordPattern.MatchString(text) {
+		return true
+	}
 	botUserID := a.slack.BotUserID()
 	if botUserID == "" {
 		return false
 	}
-
-	// Check for direct mention format: <@USERID>
-	mentionFormat := fmt.Sprintf("<@%s>", botUserID)
-	return strings.Contains(text, mentionFormat)
+	return strings.Contains(text, fmt.Sprintf("<@%s>", botUserID))
 }
 
 // processEvent handles a single Slack event
@@ -211,24 +218,20 @@ func (a *AIChat) processEvent(ctx context.Context, event slackevents.EventsAPIEv
 				zap.String("text", ev.Text),
 				zap.String("type", a.ProcessorType()),
 			)
-			// TODO: Queue messages received during rate limit and pick one to respond to
-			// Ignore bot messages to prevent loops
 			if ev.BotID != "" || ev.User == "" {
 				return
 			}
-			if a.config.RateLimitEnabled && !a.eventlimiter.Allow() {
-				a.log.Debug("Rate limit exceeded, dropping event",
-					zap.String("user", ev.User),
-					zap.String("channel", ev.Channel),
-					zap.String("text", ev.Text),
-					zap.String("type", a.ProcessorType()),
-				)
-				return
-			}
-			// Check if bot is mentioned - this is a fallback for mentions that didn't trigger AppMentionEvent
-			isMentioned := a.isBotMentioned(ev.Text)
-			if !isMentioned {
-				// Calculate engagement probability based on recent conversation
+			// Direct mentions bypass rate limit and drop chance, like AppMentionEvent.
+			if !a.isBotMentioned(ev.Text) {
+				if a.config.RateLimitEnabled && !a.eventlimiter.Allow() {
+					a.log.Debug("Rate limit exceeded, dropping event",
+						zap.String("user", ev.User),
+						zap.String("channel", ev.Channel),
+						zap.String("text", ev.Text),
+						zap.String("type", a.ProcessorType()),
+					)
+					return
+				}
 				dropChance := a.calculateDropChance(ev.User, ev.Channel, ev.Text)
 				if random.Bool(dropChance) {
 					return
@@ -721,14 +724,12 @@ func stopWordsForVariation(v float64) []string {
 
 // calculateDropChance determines the probability of dropping a message based on engagement factors
 func (a *AIChat) calculateDropChance(userID, channelID, text string) float64 {
-	baseDropChance := 0.4 // Default 40% drop rate
+	baseDropChance := 0.25
 
-	// Check for recent conversation with this user
 	if a.context != nil {
 		personaName := a.userPersona(userID)
 		recentContext, err := a.context.GetRecentContext(userID, channelID, personaName, &a.config)
 		if err == nil && len(recentContext) > 0 {
-			// Find the most recent bot response
 			var lastBotResponseTime time.Time
 			for i := len(recentContext) - 1; i >= 0; i-- {
 				if recentContext[i].Role == "assistant" {
@@ -740,17 +741,16 @@ func (a *AIChat) calculateDropChance(userID, channelID, text string) float64 {
 			if !lastBotResponseTime.IsZero() {
 				timeSinceLastReply := time.Since(lastBotResponseTime)
 
-				// Increase engagement if we recently replied (conversation momentum)
 				switch {
 				case timeSinceLastReply < 2*time.Minute:
-					baseDropChance = 0.15 // Much more likely to continue conversation
+					baseDropChance = 0.05
 				case timeSinceLastReply < 10*time.Minute:
-					baseDropChance = 0.25 // Moderately more likely
+					baseDropChance = 0.10
 				case timeSinceLastReply < 30*time.Minute:
-					baseDropChance = 0.35 // Slightly more likely
+					baseDropChance = 0.20
 				}
 
-				// But don't be too aggressive - back off if we've responded a lot recently
+				// Back off if we've been too chatty — preserves anti-spam safety valve.
 				recentBotMessages := 0
 				for _, ctx := range recentContext {
 					if ctx.Role == "assistant" && time.Since(ctx.Timestamp) < 5*time.Minute {
@@ -758,7 +758,7 @@ func (a *AIChat) calculateDropChance(userID, channelID, text string) float64 {
 					}
 				}
 				if recentBotMessages >= 3 {
-					baseDropChance += 0.2 // Back off if we've been too chatty
+					baseDropChance += 0.2
 				}
 			}
 		}
