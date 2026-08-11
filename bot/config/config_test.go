@@ -95,6 +95,8 @@ func TestBuildOpts_MakeConfig(t *testing.T) {
 			&cli.StringFlag{Name: "slack-token", Value: "test-slack-token"},
 			&cli.StringFlag{Name: "slack-signing-secret", Value: "test-signing-secret"},
 			&cli.StringFlag{Name: "openai-api-key", Value: "test-openai-key"},
+			&cli.StringFlag{Name: "openai-model", Value: "gpt-5.6-luna"},
+			&cli.StringFlag{Name: "openai-reasoning-effort", Value: "low"},
 			&cli.StringSliceFlag{Name: "slack-preferred-user", Value: []string{"user1", "user2"}},
 			&cli.StringSliceFlag{Name: "slack-preferred-channels", Value: []string{"channel1"}},
 			&cli.StringFlag{Name: "slack-user-notify-channel", Value: "user-notify-channel"},
@@ -151,6 +153,8 @@ func TestBuildOpts_MakeConfig_Defaults(t *testing.T) {
 			&cli.StringFlag{Name: "slack-token", Value: "token"},
 			&cli.StringFlag{Name: "slack-signing-secret", Value: "secret"},
 			&cli.StringFlag{Name: "openai-api-key", Value: ""},
+			&cli.StringFlag{Name: "openai-model", Value: ""},
+			&cli.StringFlag{Name: "openai-reasoning-effort", Value: ""},
 			&cli.StringSliceFlag{Name: "slack-preferred-user"},
 			&cli.StringSliceFlag{Name: "slack-preferred-channels"},
 			&cli.StringFlag{Name: "slack-user-notify-channel", Value: ""},
@@ -183,6 +187,10 @@ func TestBuildOpts_MakeConfig_Defaults(t *testing.T) {
 	// Should default data directory to ./tmp
 	if config.DataDir != "./tmp" {
 		t.Errorf("Config.DataDir = %v, want %v", config.DataDir, "./tmp")
+	}
+
+	if config.AI.ReasoningEffort != "medium" {
+		t.Errorf("Config.AI.ReasoningEffort = %q, want medium", config.AI.ReasoningEffort)
 	}
 }
 
@@ -270,21 +278,23 @@ func TestDefault(t *testing.T) {
 
 func TestNewConfig(t *testing.T) {
 	opts := configOpts{
-		Version:              "1.0.0",
-		BuildTime:            "2023-01-01",
-		LogLevel:             "debug",
-		Environment:          "development",
-		DataDir:              "/custom/data",
-		ServerPort:           9000,
-		SlackToken:           "test-token",
-		SlackSigningSecret:   "test-secret",
-		OpenAIAPIKey:         "test-key",
-		PreferredUsers:       []string{"user1", "user2"},
-		PreferredChannels:    []string{"channel1"},
-		UserNotifyChannel:    "user-notify",
-		SlackEventsPath:      "/events",
-		ConfigFile:           "./config.yaml",
-		VibecheckBanDuration: 10 * time.Minute,
+		Version:               "1.0.0",
+		BuildTime:             "2023-01-01",
+		LogLevel:              "debug",
+		Environment:           "development",
+		DataDir:               "/custom/data",
+		ServerPort:            9000,
+		SlackToken:            "test-token",
+		SlackSigningSecret:    "test-secret",
+		OpenAIAPIKey:          "test-key",
+		OpenAIModel:           "gpt-5.6-luna",
+		OpenAIReasoningEffort: "low",
+		PreferredUsers:        []string{"user1", "user2"},
+		PreferredChannels:     []string{"channel1"},
+		UserNotifyChannel:     "user-notify",
+		SlackEventsPath:       "/events",
+		ConfigFile:            "./config.yaml",
+		VibecheckBanDuration:  10 * time.Minute,
 	}
 
 	config, err := newConfig(opts)
@@ -317,6 +327,13 @@ func TestNewConfig(t *testing.T) {
 	// Test vibecheck ban duration configuration
 	if config.Vibecheck.BanDuration != 10*time.Minute {
 		t.Errorf("newConfig() Vibecheck.BanDuration = %v, want %v", config.Vibecheck.BanDuration, 10*time.Minute)
+	}
+
+	if config.AI.Model != "gpt-5.6-luna" {
+		t.Errorf("newConfig() AI.Model = %q, want gpt-5.6-luna", config.AI.Model)
+	}
+	if config.AI.ReasoningEffort != "low" {
+		t.Errorf("newConfig() AI.ReasoningEffort = %q, want low", config.AI.ReasoningEffort)
 	}
 }
 

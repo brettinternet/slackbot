@@ -81,6 +81,8 @@ func (l BuildOpts) MakeConfig(cmd *cli.Command) (Config, error) {
 		SlackToken:             cmd.String("slack-token"),
 		SlackSigningSecret:     cmd.String("slack-signing-secret"),
 		OpenAIAPIKey:           cmd.String("openai-api-key"),
+		OpenAIModel:            cmd.String("openai-model"),
+		OpenAIReasoningEffort:  cmd.String("openai-reasoning-effort"),
 		PreferredUsers:         cmd.StringSlice("slack-preferred-user"),
 		PreferredChannels:      cmd.StringSlice("slack-preferred-channels"),
 		UserNotifyChannel:      cmd.String("slack-user-notify-channel"),
@@ -95,20 +97,22 @@ func (l BuildOpts) MakeConfig(cmd *cli.Command) (Config, error) {
 }
 
 type configOpts struct {
-	Version            string
-	BuildTime          string
-	LogLevel           string
-	Environment        string
-	DataDir            string
-	ServerPort         uint32
-	SlackToken         string
-	SlackSigningSecret string
-	OpenAIAPIKey       string
-	PreferredUsers     []string
-	PreferredChannels  []string
-	UserNotifyChannel  string
-	SlackEventsPath    string
-	ConfigFile         string
+	Version               string
+	BuildTime             string
+	LogLevel              string
+	Environment           string
+	DataDir               string
+	ServerPort            uint32
+	SlackToken            string
+	SlackSigningSecret    string
+	OpenAIAPIKey          string
+	OpenAIModel           string
+	OpenAIReasoningEffort string
+	PreferredUsers        []string
+	PreferredChannels     []string
+	UserNotifyChannel     string
+	SlackEventsPath       string
+	ConfigFile            string
 	// AI Chat Personas Configuration
 	PersonasConfig         string
 	PersonasStickyDuration time.Duration
@@ -205,7 +209,9 @@ func newConfig(opts configOpts) (Config, error) {
 			BanDuration:    opts.VibecheckBanDuration,
 		},
 		AI: ai.Config{
-			OpenAIAPIKey: opts.OpenAIAPIKey,
+			OpenAIAPIKey:    opts.OpenAIAPIKey,
+			Model:           valueOrDefault(opts.OpenAIModel, ai.DefaultModel),
+			ReasoningEffort: valueOrDefault(opts.OpenAIReasoningEffort, ai.DefaultReasoningEffort),
 		},
 		AIChat: aichat.Config{
 			DataDir:            dataDir,
@@ -223,6 +229,13 @@ func newConfig(opts configOpts) (Config, error) {
 			BusinessHoursEnd:   opts.ShowerthoughtBusinessHoursEnd,
 		},
 	}, nil
+}
+
+func valueOrDefault(value, defaultValue string) string {
+	if value == "" {
+		return defaultValue
+	}
+	return value
 }
 
 // Relative path from the executable directory.

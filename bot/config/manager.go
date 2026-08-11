@@ -57,7 +57,9 @@ type CLIOverrides struct {
 	UserNotifyChannel  *string
 
 	// AI settings
-	OpenAIAPIKey *string
+	OpenAIAPIKey          *string
+	OpenAIModel           *string
+	OpenAIReasoningEffort *string
 
 	// AI Chat settings
 	PersonasConfig         *string
@@ -197,6 +199,9 @@ func (cm *ConfigManager) mergeConfigs(fileConfig *FileConfig) configOpts {
 	opts.UserNotifyChannel = stringWithOverride("", cm.cliOverrides.UserNotifyChannel)
 
 	opts.OpenAIAPIKey = stringWithOverride("", cm.cliOverrides.OpenAIAPIKey)
+	opts.OpenAIModel = stringWithOverride(ai.DefaultModel, cm.cliOverrides.OpenAIModel)
+	opts.OpenAIReasoningEffort = stringWithOverride(
+		ai.DefaultReasoningEffort, cm.cliOverrides.OpenAIReasoningEffort)
 
 	userConfig := fileConfig.User
 	if userConfig.NotifyChannel != nil && cm.cliOverrides.UserNotifyChannel == nil {
@@ -486,6 +491,14 @@ func ExtractCLIOverrides(cmd *cli.Command) *CLIOverrides {
 	if cmd.IsSet("openai-api-key") || cmd.String("openai-api-key") != "" {
 		val := cmd.String("openai-api-key")
 		overrides.OpenAIAPIKey = &val
+	}
+	if cmd.IsSet("openai-model") {
+		val := cmd.String("openai-model")
+		overrides.OpenAIModel = &val
+	}
+	if cmd.IsSet("openai-reasoning-effort") {
+		val := cmd.String("openai-reasoning-effort")
+		overrides.OpenAIReasoningEffort = &val
 	}
 	if cmd.IsSet("personas-config") {
 		val := cmd.String("personas-config")
