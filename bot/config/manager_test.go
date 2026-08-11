@@ -34,6 +34,21 @@ func TestExtractCLIOverrides_EnvironmentVariables(t *testing.T) {
 			},
 		},
 		{
+			name:   "OpenAI reasoning effort from environment",
+			envKey: "OPENAI_REASONING_EFFORT",
+			envVal: "low",
+			verify: func(overrides *CLIOverrides) error {
+				if overrides.OpenAIReasoningEffort == nil {
+					t.Error("OpenAIReasoningEffort should not be nil when environment variable is set")
+					return nil
+				}
+				if *overrides.OpenAIReasoningEffort != "low" {
+					t.Errorf("OpenAIReasoningEffort = %v, want low", *overrides.OpenAIReasoningEffort)
+				}
+				return nil
+			},
+		},
+		{
 			name:   "slack token from environment",
 			envKey: "SLACK_TOKEN",
 			envVal: "xoxb-test-token-from-env",
@@ -87,6 +102,12 @@ func TestExtractCLIOverrides_EnvironmentVariables(t *testing.T) {
 						Sources: cli.NewValueSourceChain(
 							cli.EnvVar("OPENAI_API_KEY"),
 							cli.File("/run/secrets/openai_api_key"),
+						),
+					},
+					&cli.StringFlag{
+						Name: "openai-reasoning-effort",
+						Sources: cli.NewValueSourceChain(
+							cli.EnvVar("OPENAI_REASONING_EFFORT"),
 						),
 					},
 					&cli.StringFlag{
@@ -183,5 +204,32 @@ func TestExtractCLIOverrides_EmptyEnvironment(t *testing.T) {
 	}
 	if overrides.SlackSigningSecret != nil {
 		t.Error("SlackSigningSecret should be nil when environment variable is empty")
+	}
+}
+
+func TestOpenAIConfigFromEnvironment(t *testing.T) {
+	t.Setenv("SLACK_TOKEN", "test-token")
+	t.Setenv("OPENAI_MODEL", "gpt-5.6-luna")
+	t.Setenv("OPENAI_REASONING_EFFORT", "low")
+
+	var got Config
+	cmd := &cli.Command{
+		Name:  "test",
+		Flags: Flags(),
+		Action: func(_ context.Context, cmd *cli.Command) error {
+			var err error
+			got, err = (BuildOpts{}).MakeConfig(cmd)
+			return err
+		},
+	}
+
+	if err := cmd.Run(context.Background(), []string{"test"}); err != nil {
+		t.Fatalf("run command: %v", err)
+	}
+	if got.AI.Model != "gpt-5.6-luna" {
+		t.Errorf("AI.Model = %q, want gpt-5.6-luna", got.AI.Model)
+	}
+	if got.AI.ReasoningEffort != "low" {
+		t.Errorf("AI.ReasoningEffort = %q, want low", got.AI.ReasoningEffort)
 	}
 }

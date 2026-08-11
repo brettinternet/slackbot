@@ -2,9 +2,17 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/tmc/langchaingo/llms"
+	"github.com/tmc/langchaingo/llms/openai"
+	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestNewAI(t *testing.T) {
@@ -29,6 +37,132 @@ func TestNewAI(t *testing.T) {
 
 	if ai.llm != nil {
 		t.Error("NewAI() should not initialize llm until Start() is called")
+	}
+}
+
+func TestNewAI_DefaultsModelAndReasoningEffort(t *testing.T) {
+	ai := NewAI(zaptest.NewLogger(t), Config{OpenAIAPIKey: "test-api-key"})
+
+	if ai.config.Model != DefaultModel {
+		t.Errorf("Model = %q, want %q", ai.config.Model, DefaultModel)
+	}
+	if ai.config.ReasoningEffort != DefaultReasoningEffort {
+		t.Errorf("ReasoningEffort = %q, want %q", ai.config.ReasoningEffort, DefaultReasoningEffort)
+	}
+}
+
+func TestAI_StartLogsModelAndReasoningEffort(t *testing.T) {
+	tests := []struct {
+		name             string
+		model            string
+		effort           string
+		wantLoggedEffort string
+	}{
+		{
+			name:             "reasoning model",
+			model:            "gpt-5.6-luna",
+			effort:           "low",
+			wantLoggedEffort: "low",
+		},
+		{
+			name:             "non-reasoning model",
+			model:            "gpt-3.5-turbo",
+			effort:           DefaultReasoningEffort,
+			wantLoggedEffort: "not applicable",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			core, logs := observer.New(zap.InfoLevel)
+			ai := NewAI(zap.New(core), Config{
+				OpenAIAPIKey:    "test-api-key",
+				Model:           tt.model,
+				ReasoningEffort: tt.effort,
+			})
+
+			if err := ai.Start(context.Background()); err != nil {
+				t.Fatalf("Start() error = %v", err)
+			}
+
+			entries := logs.FilterMessage("Configured OpenAI model").All()
+			if len(entries) != 1 {
+				t.Fatalf("startup log count = %d, want 1", len(entries))
+			}
+			fields := entries[0].ContextMap()
+			if fields["model"] != tt.model {
+				t.Errorf("logged model = %v, want %s", fields["model"], tt.model)
+			}
+			if fields["reasoning_effort"] != tt.wantLoggedEffort {
+				t.Errorf("logged reasoning_effort = %v, want %s",
+					fields["reasoning_effort"], tt.wantLoggedEffort)
+			}
+		})
+	}
+}
+
+func TestReasoningEffortClientChatRequest(t *testing.T) {
+	tests := []struct {
+		name       string
+		model      string
+		wantEffort bool
+	}{
+		{name: "reasoning model includes effort", model: "gpt-5.6-luna", wantEffort: true},
+		{name: "non-reasoning model omits effort", model: "gpt-3.5-turbo", wantEffort: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			requests := make(chan map[string]any, 1)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var payload map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+					t.Errorf("decode request: %v", err)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				requests <- payload
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprintf(w, `{
+					"id":"chatcmpl-test",
+					"object":"chat.completion",
+					"created":0,
+					"model":%q,
+					"choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]
+				}`, tt.model)
+			}))
+			defer server.Close()
+
+			llm, err := openai.New(
+				openai.WithToken("test-api-key"),
+				openai.WithModel(tt.model),
+				openai.WithBaseURL(server.URL),
+				openai.WithHTTPClient(&reasoningEffortClient{
+					client: server.Client(),
+					model:  tt.model,
+					effort: DefaultReasoningEffort,
+				}),
+			)
+			if err != nil {
+				t.Fatalf("create test LLM: %v", err)
+			}
+
+			_, err = llm.GenerateContent(context.Background(), []llms.MessageContent{
+				llms.TextParts(llms.ChatMessageTypeHuman, "hello"),
+			})
+			if err != nil {
+				t.Fatalf("GenerateContent() error = %v", err)
+			}
+
+			payload := <-requests
+			effort, found := payload["reasoning_effort"]
+			if found != tt.wantEffort {
+				t.Fatalf("reasoning_effort presence = %v, want %v", found, tt.wantEffort)
+			}
+			if found && effort != DefaultReasoningEffort {
+				t.Errorf("reasoning_effort = %v, want %q", effort, DefaultReasoningEffort)
+			}
+		})
 	}
 }
 

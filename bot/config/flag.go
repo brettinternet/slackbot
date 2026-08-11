@@ -140,6 +140,20 @@ func Flags() []cli.Flag {
 			),
 		},
 		&cli.StringFlag{
+			Name:  "openai-model",
+			Usage: "OpenAI model for AI conversations.",
+			Sources: cli.NewValueSourceChain(
+				cli.EnvVar("OPENAI_MODEL"),
+			),
+		},
+		&cli.StringFlag{
+			Name:  "openai-reasoning-effort",
+			Usage: "Reasoning effort for the configured OpenAI model.",
+			Sources: cli.NewValueSourceChain(
+				cli.EnvVar("OPENAI_REASONING_EFFORT"),
+			),
+		},
+		&cli.StringFlag{
 			Name:  "personas-config",
 			Usage: "JSON or YAML string defining AI Chat personas as name:prompt pairs.",
 			Sources: cli.NewValueSourceChain(
