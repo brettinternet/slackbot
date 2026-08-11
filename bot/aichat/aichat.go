@@ -413,8 +413,6 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 	var temperature float64
 
 	lengthVariation := random.Float(0.0, 1.0)
-	// OpenAI allows at most 4 stop sequences — stopWordsForVariation enforces that.
-	stopWords := stopWordsForVariation(lengthVariation)
 	switch {
 	case lengthVariation < 0.60: // Very short responses (60%) — single-line punchy reaction
 		maxTokens = 40
@@ -431,12 +429,7 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 	}
 
 	resp, err := a.ai.LLM().GenerateContent(ctx, messages,
-		llms.WithTemperature(temperature),
-		llms.WithMaxTokens(maxTokens),
-		llms.WithTopP(0.9),
-		llms.WithFrequencyPenalty(1.0),
-		llms.WithPresencePenalty(0.6),
-		llms.WithStopWords(stopWords))
+		generationOptions(temperature, maxTokens)...)
 	if err != nil {
 		a.log.Error("Failed to generate content",
 			zap.String("user", m.UserID),
@@ -709,17 +702,17 @@ You're in a Slack chat. Keep replies SHORT — one sentence usually, two max. Ne
 	return messages
 }
 
-// stopWordsForVariation returns stop sequences for the given length-variation bucket.
-// OpenAI enforces a maximum of 4 stop sequences — this function must never exceed that.
-// Role-label stops ("Human:", "Assistant:") are no longer needed since GenerateContent
-// uses the chat API which never produces them.
-func stopWordsForVariation(v float64) []string {
-	if v < 0.60 {
-		// Single-line replies: stop at first newline.
-		return []string{"\n"}
+// generationOptions returns model-compatible options for an AI chat response.
+// Response length is bounded with max tokens rather than stop sequences because
+// some models reject the stop parameter.
+func generationOptions(temperature float64, maxTokens int) []llms.CallOption {
+	return []llms.CallOption{
+		llms.WithTemperature(temperature),
+		llms.WithMaxTokens(maxTokens),
+		llms.WithTopP(0.9),
+		llms.WithFrequencyPenalty(1.0),
+		llms.WithPresencePenalty(0.6),
 	}
-	// Longer tiers: stop at paragraph breaks.
-	return []string{"\n\n"}
 }
 
 // calculateDropChance determines the probability of dropping a message based on engagement factors
