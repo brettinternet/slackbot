@@ -709,7 +709,6 @@ func generationOptions(temperature float64, maxTokens int) []llms.CallOption {
 	return []llms.CallOption{
 		llms.WithTemperature(temperature),
 		llms.WithMaxTokens(maxTokens),
-		llms.WithTopP(0.9),
 		llms.WithFrequencyPenalty(1.0),
 		llms.WithPresencePenalty(0.6),
 	}

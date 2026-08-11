@@ -190,7 +190,6 @@ func (st *ShowerThought) generateShowerThought(ctx context.Context) (string, err
 	resp, err := st.ai.LLM().GenerateContent(ctx, messages,
 		llms.WithTemperature(random.Float(0.3, 1.5)),
 		llms.WithMaxTokens(120),
-		llms.WithTopP(0.95),
 		llms.WithFrequencyPenalty(0.8),
 		llms.WithPresencePenalty(0.5),
 	)

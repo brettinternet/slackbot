@@ -101,14 +101,23 @@ func TestAI_StartLogsModelAndReasoningEffort(t *testing.T) {
 	}
 }
 
-func TestReasoningEffortClientChatRequest(t *testing.T) {
+func TestModelCompatibilityClientChatRequest(t *testing.T) {
 	tests := []struct {
-		name       string
-		model      string
-		wantEffort bool
+		name         string
+		model        string
+		wantEffort   bool
+		wantSampling bool
 	}{
-		{name: "reasoning model includes effort", model: "gpt-5.6-luna", wantEffort: true},
-		{name: "non-reasoning model omits effort", model: "gpt-3.5-turbo", wantEffort: false},
+		{
+			name:       "reasoning model includes effort and omits unsupported sampling parameters",
+			model:      "gpt-5.6-luna",
+			wantEffort: true,
+		},
+		{
+			name:         "non-reasoning model omits effort and keeps sampling parameters",
+			model:        "gpt-3.5-turbo",
+			wantSampling: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -137,10 +146,10 @@ func TestReasoningEffortClientChatRequest(t *testing.T) {
 				openai.WithToken("test-api-key"),
 				openai.WithModel(tt.model),
 				openai.WithBaseURL(server.URL),
-				openai.WithHTTPClient(&reasoningEffortClient{
+				openai.WithHTTPClient(&modelCompatibilityClient{
 					client: server.Client(),
 					model:  tt.model,
-					effort: DefaultReasoningEffort,
+					effort: "low",
 				}),
 			)
 			if err != nil {
@@ -149,7 +158,13 @@ func TestReasoningEffortClientChatRequest(t *testing.T) {
 
 			_, err = llm.GenerateContent(context.Background(), []llms.MessageContent{
 				llms.TextParts(llms.ChatMessageTypeHuman, "hello"),
-			})
+			},
+				llms.WithTemperature(0.7),
+				llms.WithMaxTokens(100),
+				llms.WithTopP(0.9),
+				llms.WithFrequencyPenalty(1.0),
+				llms.WithPresencePenalty(0.6),
+			)
 			if err != nil {
 				t.Fatalf("GenerateContent() error = %v", err)
 			}
@@ -159,8 +174,28 @@ func TestReasoningEffortClientChatRequest(t *testing.T) {
 			if found != tt.wantEffort {
 				t.Fatalf("reasoning_effort presence = %v, want %v", found, tt.wantEffort)
 			}
-			if found && effort != DefaultReasoningEffort {
-				t.Errorf("reasoning_effort = %v, want %q", effort, DefaultReasoningEffort)
+			if found && effort != "low" {
+				t.Errorf("reasoning_effort = %v, want %q", effort, "low")
+			}
+			for _, parameter := range []string{
+				"temperature",
+				"frequency_penalty",
+				"presence_penalty",
+			} {
+				_, found := payload[parameter]
+				if found != tt.wantSampling {
+					t.Errorf("%s presence = %v, want %v", parameter, found, tt.wantSampling)
+				}
+			}
+			if _, found := payload["top_p"]; found {
+				t.Error("top_p is unexpectedly present")
+			}
+			maxTokens, found := payload["max_completion_tokens"]
+			if !found {
+				t.Fatal("max_completion_tokens is missing")
+			}
+			if maxTokens != float64(100) {
+				t.Errorf("max_completion_tokens = %v, want 100", maxTokens)
 			}
 		})
 	}

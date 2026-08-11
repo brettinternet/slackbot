@@ -49,7 +49,7 @@ func (a *AI) Start(ctx context.Context) error {
 	model, err := openai.New(
 		openai.WithToken(a.config.OpenAIAPIKey),
 		openai.WithModel(a.config.Model),
-		openai.WithHTTPClient(&reasoningEffortClient{
+		openai.WithHTTPClient(&modelCompatibilityClient{
 			client: httputil.DefaultClient,
 			model:  a.config.Model,
 			effort: a.config.ReasoningEffort,
@@ -71,7 +71,7 @@ func (a *AI) Start(ctx context.Context) error {
 	return nil
 }
 
-type reasoningEffortClient struct {
+type modelCompatibilityClient struct {
 	client interface {
 		Do(*http.Request) (*http.Response, error)
 	}
@@ -79,7 +79,7 @@ type reasoningEffortClient struct {
 	effort string
 }
 
-func (c *reasoningEffortClient) Do(req *http.Request) (*http.Response, error) {
+func (c *modelCompatibilityClient) Do(req *http.Request) (*http.Response, error) {
 	if req.Body == nil ||
 		!strings.HasSuffix(req.URL.Path, "/chat/completions") ||
 		!supportsReasoningEffort(c.model) {
@@ -103,6 +103,10 @@ func (c *reasoningEffortClient) Do(req *http.Request) (*http.Response, error) {
 		return nil, fmt.Errorf("encode OpenAI reasoning effort: %w", err)
 	}
 	payload["reasoning_effort"] = effort
+	delete(payload, "temperature")
+	delete(payload, "top_p")
+	delete(payload, "frequency_penalty")
+	delete(payload, "presence_penalty")
 	body, err = json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("encode OpenAI request body: %w", err)
