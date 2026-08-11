@@ -19,6 +19,8 @@ const (
 	DefaultReasoningEffort = "medium"
 )
 
+const reasoningTokenAllowance = 1024
+
 type Config struct {
 	OpenAIAPIKey    string
 	Model           string
@@ -103,6 +105,16 @@ func (c *modelCompatibilityClient) Do(req *http.Request) (*http.Response, error)
 		return nil, fmt.Errorf("encode OpenAI reasoning effort: %w", err)
 	}
 	payload["reasoning_effort"] = effort
+	if rawMaxTokens, ok := payload["max_completion_tokens"]; ok {
+		var maxTokens int
+		if err := json.Unmarshal(rawMaxTokens, &maxTokens); err != nil {
+			return nil, fmt.Errorf("decode OpenAI max completion tokens: %w", err)
+		}
+		payload["max_completion_tokens"], err = json.Marshal(maxTokens + reasoningTokenAllowance)
+		if err != nil {
+			return nil, fmt.Errorf("encode OpenAI max completion tokens: %w", err)
+		}
+	}
 	delete(payload, "temperature")
 	delete(payload, "top_p")
 	delete(payload, "frequency_penalty")

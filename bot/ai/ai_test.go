@@ -103,20 +103,23 @@ func TestAI_StartLogsModelAndReasoningEffort(t *testing.T) {
 
 func TestModelCompatibilityClientChatRequest(t *testing.T) {
 	tests := []struct {
-		name         string
-		model        string
-		wantEffort   bool
-		wantSampling bool
+		name          string
+		model         string
+		wantEffort    bool
+		wantSampling  bool
+		wantMaxTokens float64
 	}{
 		{
-			name:       "reasoning model includes effort and omits unsupported sampling parameters",
-			model:      "gpt-5.6-luna",
-			wantEffort: true,
+			name:          "reasoning model includes effort, token allowance, and omits unsupported sampling parameters",
+			model:         "gpt-5.6-luna",
+			wantEffort:    true,
+			wantMaxTokens: 100 + reasoningTokenAllowance,
 		},
 		{
-			name:         "non-reasoning model omits effort and keeps sampling parameters",
-			model:        "gpt-3.5-turbo",
-			wantSampling: true,
+			name:          "non-reasoning model omits effort and keeps sampling parameters",
+			model:         "gpt-3.5-turbo",
+			wantSampling:  true,
+			wantMaxTokens: 100,
 		},
 	}
 
@@ -194,8 +197,8 @@ func TestModelCompatibilityClientChatRequest(t *testing.T) {
 			if !found {
 				t.Fatal("max_completion_tokens is missing")
 			}
-			if maxTokens != float64(100) {
-				t.Errorf("max_completion_tokens = %v, want 100", maxTokens)
+			if maxTokens != tt.wantMaxTokens {
+				t.Errorf("max_completion_tokens = %v, want %v", maxTokens, tt.wantMaxTokens)
 			}
 		})
 	}
