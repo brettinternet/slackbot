@@ -13,6 +13,8 @@ node_modules
 
 mise.local.toml
 
+.worktrees
+
 # AI
 .serena
 AGENTS.local.md
