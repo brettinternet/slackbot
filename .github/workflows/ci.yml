@@ -115,6 +115,7 @@ jobs:
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: slackbot:ci
+          version: v0.74.0
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: 1

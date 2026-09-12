@@ -31,7 +31,8 @@ RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
 FROM alpine:3.23
 
 # For fsnotify
-RUN apk add --no-cache inotify-tools
+RUN apk upgrade --no-cache && \
+    apk add --no-cache inotify-tools
 
 COPY --from=builder /app/bin/bot /usr/local/bin/bot
 

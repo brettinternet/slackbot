@@ -3,7 +3,8 @@ FROM golang:${IMAGE_VERSION}
 
 WORKDIR /app
 
-RUN apk add --no-cache gcc musl-dev inotify-tools
+RUN apk upgrade --no-cache && \
+  apk add --no-cache gcc musl-dev inotify-tools
 
 COPY go.mod go.sum ./
 RUN go mod download
