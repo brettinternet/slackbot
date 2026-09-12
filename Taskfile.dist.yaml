@@ -31,7 +31,7 @@ tasks:
     deps:
       - task: bot:check
     cmds:
-      - dprint check
+      - prettier --check .
       - gitleaks git --redact --verbose --no-banner
 
   fix:
@@ -39,7 +39,7 @@ tasks:
     deps:
       - task: bot:fix
     cmds:
-      - dprint fmt
+      - prettier --write .
 
   test:
     desc: Run all tests

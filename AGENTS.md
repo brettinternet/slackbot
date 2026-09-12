@@ -41,6 +41,7 @@ Individual tools:
 - `golangci-lint run --timeout 5m` - Comprehensive linting
 - `gosec ./...` - Security scanning
 - `errcheck ./...` - Error checking
+- `prettier --check .` / `prettier --write .` - Config and documentation formatting
 - Put worktrees in ./.worktrees
 
 ### Building
@@ -56,7 +57,7 @@ go build ./cmd/bot # Simple build
 cmd/bot/           # Main application entry point
 bot/               # Core business logic
 ├── config/        # Configuration management
-├── slack/         # Slack API integration  
+├── slack/         # Slack API integration
 ├── aichat/        # AI chat functionality
 ├── user/          # User management
 ├── vibecheck/     # Vibecheck feature

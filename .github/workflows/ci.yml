@@ -77,10 +77,11 @@ jobs:
           go install github.com/kisielk/errcheck@latest
           go install github.com/zricethezav/gitleaks/v8@latest
 
-      - name: Install dprint
-        run: |
-          curl -fsSL https://dprint.dev/install.sh | sh
-          echo "$HOME/.dprint/bin" >> "$GITHUB_PATH"
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install Prettier
+        run: bun install --global prettier
 
       - name: Run all checks
         run: task check
