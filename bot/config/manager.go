@@ -236,6 +236,12 @@ func (cm *ConfigManager) mergeConfigs(fileConfig *FileConfig) configOpts {
 		showerthoughtConfig.BusinessHoursStart, 9, nil)
 	opts.ShowerthoughtBusinessHoursEnd = intWithFileAndOverride(
 		showerthoughtConfig.BusinessHoursEnd, 17, nil)
+	if opts.ShowerthoughtBusinessHoursStart < 0 || opts.ShowerthoughtBusinessHoursStart > 23 ||
+		opts.ShowerthoughtBusinessHoursEnd < 1 || opts.ShowerthoughtBusinessHoursEnd > 24 ||
+		opts.ShowerthoughtBusinessHoursStart >= opts.ShowerthoughtBusinessHoursEnd {
+		opts.ShowerthoughtBusinessHoursStart = 9
+		opts.ShowerthoughtBusinessHoursEnd = 17
+	}
 
 	return opts
 }

@@ -10,12 +10,13 @@ import (
 	"strings"
 
 	"github.com/tmc/langchaingo/httputil"
+	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/llms/openai"
 	"go.uber.org/zap"
 )
 
 const (
-	DefaultModel           = "gpt-3.5-turbo"
+	DefaultModel           = "gpt-4.1-mini"
 	DefaultReasoningEffort = "medium"
 )
 
@@ -146,4 +147,12 @@ func (a *AI) Stop(ctx context.Context) error {
 
 func (a *AI) LLM() *openai.LLM {
 	return a.llm
+}
+
+// GenerateContent exposes the narrow operation used by features that generate text.
+func (a *AI) GenerateContent(ctx context.Context, messages []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error) {
+	if a.llm == nil {
+		return nil, fmt.Errorf("AI model has not been started")
+	}
+	return a.llm.GenerateContent(ctx, messages, options...)
 }

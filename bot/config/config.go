@@ -150,6 +150,10 @@ type Config struct {
 
 func newConfig(opts configOpts) (Config, error) {
 	dataDir := opts.DataDir
+	showerthoughtStart, showerthoughtEnd := opts.ShowerthoughtBusinessHoursStart, opts.ShowerthoughtBusinessHoursEnd
+	if showerthoughtStart < 0 || showerthoughtStart > 23 || showerthoughtEnd < 1 || showerthoughtEnd > 24 || showerthoughtStart >= showerthoughtEnd {
+		showerthoughtStart, showerthoughtEnd = 9, 17
+	}
 	if dataDir == "" {
 		dataDir = "./tmp"
 	} else {
@@ -224,8 +228,9 @@ func newConfig(opts configOpts) (Config, error) {
 		ShowerThought: showerthought.Config{
 			Enabled:            opts.ShowerthoughtEnabled,
 			NotifyChannel:      opts.UserNotifyChannel,
-			BusinessHoursStart: opts.ShowerthoughtBusinessHoursStart,
-			BusinessHoursEnd:   opts.ShowerthoughtBusinessHoursEnd,
+			DataDir:            dataDir,
+			BusinessHoursStart: showerthoughtStart,
+			BusinessHoursEnd:   showerthoughtEnd,
 		},
 	}, nil
 }
