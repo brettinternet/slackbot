@@ -100,7 +100,7 @@ func (s *Bot) Setup(ctx context.Context, cmd *cli.Command) (context.Context, err
 	s.userWatch = user.NewUserWatch(s.log, s.configManager.GetUserConfig(), s.slack)
 
 	// Initialize services conditionally based on their configuration
-	if err := s.initializeServices(ctx, currentConfig); err != nil {
+	if err := s.initializeServices(ctx); err != nil {
 		return ctx, err
 	}
 
@@ -113,7 +113,7 @@ func (s *Bot) Setup(ctx context.Context, cmd *cli.Command) (context.Context, err
 }
 
 // initializeServices conditionally initializes services based on configuration
-func (s *Bot) initializeServices(ctx context.Context, currentConfig *config.Config) error {
+func (s *Bot) initializeServices(ctx context.Context) error {
 	chatConfig := s.configManager.GetChatConfig()
 	chatService, err := chat.NewChat(s.log, chatConfig, s.slack)
 	if err != nil {
@@ -122,24 +122,11 @@ func (s *Bot) initializeServices(ctx context.Context, currentConfig *config.Conf
 	s.chat = chatService
 	s.log.Info("Chat service initialized", zap.Int("responses", len(chatConfig.Responses)))
 
-	// Only initialize vibecheck service if there are reactions configured
-	fileConfig := s.configManager.GetConfig()
-	var hasReactions bool
-	if fileConfig != nil {
-		var fc config.FileConfig
-		if currentConfig.ConfigFile != "" {
-			if err := config.ReadConfig(currentConfig.ConfigFile, &fc); err == nil {
-				hasReactions = len(fc.Vibecheck.GoodReactions) > 0 || len(fc.Vibecheck.BadReactions) > 0
-			}
-		}
-	}
-
-	if hasReactions {
-		s.vibecheck = vibecheck.NewVibecheck(s.log, s.configManager.GetVibecheckConfig(), s.slack)
-		s.log.Info("Vibecheck service initialized")
-	} else {
-		s.log.Info("Vibecheck service disabled - no reactions configured")
-	}
+	// Keep the service running so configuration reloads can enable it and existing bans
+	// can still expire while new vibechecks are disabled.
+	vibecheckConfig := s.configManager.GetVibecheckConfig()
+	s.vibecheck = vibecheck.NewVibecheck(s.log, vibecheckConfig, s.slack)
+	s.log.Info("Vibecheck service initialized", zap.Bool("enabled", vibecheckConfig.Enabled))
 
 	// Only initialize AI services if OpenAI API key is provided
 	aiConfig := s.configManager.GetAIConfig()
@@ -199,6 +186,9 @@ func (s *Bot) onConfigChange(newConfig *config.Config) {
 		if err := s.chat.SetConfig(newConfig.Chat); err != nil {
 			s.log.Error("Failed to update chat configuration", zap.Error(err))
 		}
+	}
+	if s.vibecheck != nil {
+		s.vibecheck.SetConfig(newConfig.Vibecheck)
 	}
 
 	if s.userWatch != nil {

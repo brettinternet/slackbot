@@ -224,6 +224,14 @@ func (cm *ConfigManager) mergeConfigs(fileConfig *FileConfig) configOpts {
 	vibecheckConfig := fileConfig.Vibecheck
 	opts.VibecheckBanDuration = durationWithFileAndOverride(
 		vibecheckConfig.BanDuration, 5*time.Minute, cm.cliOverrides.VibecheckBanDuration)
+	opts.VibecheckGoodReactions = vibecheckConfig.GoodReactions
+	opts.VibecheckGoodText = vibecheckConfig.GoodText
+	opts.VibecheckBadReactions = vibecheckConfig.BadReactions
+	opts.VibecheckBadText = vibecheckConfig.BadText
+	opts.VibecheckEnabled = len(vibecheckConfig.GoodReactions) > 0 ||
+		len(vibecheckConfig.GoodText) > 0 ||
+		len(vibecheckConfig.BadReactions) > 0 ||
+		len(vibecheckConfig.BadText) > 0
 
 	chatConfig := fileConfig.Chat
 	opts.ChatResponses = chatConfig.Responses

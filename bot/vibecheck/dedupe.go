@@ -28,32 +28,20 @@ func newMessageDeduplicator(expirationDuration time.Duration) *messageDeduplicat
 // IsDupe checks if a message has been processed recently
 // Returns true if it's a duplicate (should be skipped) and false if it's new
 func (d *messageDeduplicator) IsDupe(userID, channelID, msgID string) bool {
-	d.mu.RLock()
-	key := recentMessageKey{userID: userID, channelID: channelID, msgID: msgID}
-	_, exists := d.recentMessages[key]
-	d.mu.RUnlock()
-
-	if exists {
-		return true
-	}
-
-	d.mu.Lock()
-	d.recentMessages[key] = time.Now()
-	d.mu.Unlock()
-
-	go d.cleanup()
-
-	return false
-}
-
-func (d *messageDeduplicator) cleanup() {
-	now := time.Now()
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
+	now := time.Now()
 	for key, processTime := range d.recentMessages {
 		if now.Sub(processTime) > d.expirationDuration {
 			delete(d.recentMessages, key)
 		}
 	}
+
+	key := recentMessageKey{userID: userID, channelID: channelID, msgID: msgID}
+	if _, exists := d.recentMessages[key]; exists {
+		return true
+	}
+	d.recentMessages[key] = now
+	return false
 }

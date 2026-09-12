@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -32,14 +33,20 @@ type FileConfig struct {
 }
 
 type Config struct {
+	Enabled        bool
 	PreferredUsers []string
 	DataDir        string
 	BanDuration    time.Duration
+	GoodReactions  []string
+	GoodText       []string
+	BadReactions   []string
+	BadText        []string
 }
 
 // Vibecheck handles responding to messages to verify the users vibe
 type Vibecheck struct {
 	log         *zap.Logger
+	configMu    sync.RWMutex
 	config      Config
 	slack       slackService
 	isConnected atomic.Bool
@@ -48,7 +55,6 @@ type Vibecheck struct {
 	kickedUsers *kickedUsersManager
 	ticker      *time.Ticker
 	dedupe      *messageDeduplicator
-	fileConfig  FileConfig
 }
 
 func NewVibecheck(log *zap.Logger, config Config, s slackService) *Vibecheck {
@@ -162,6 +168,11 @@ func (c *Vibecheck) handleMessageEvent(ctx context.Context, ev *slackevents.Mess
 		return
 	}
 
+	config := c.getConfig()
+	if !config.Enabled {
+		return
+	}
+
 	if pattern.MatchString(message) {
 		c.log.Info("Message matched vibecheck pattern.",
 			zap.String("channel", ev.Channel),
@@ -186,7 +197,7 @@ func (c *Vibecheck) handleMessageEvent(ctx context.Context, ev *slackevents.Mess
 			)
 		}
 
-		response := randomResponse(passed, c.fileConfig)
+		response := randomResponse(passed, config)
 		msgOptions := []slack.MsgOption{
 			slack.MsgOptionText(response, false),
 			slack.MsgOptionAsUser(true),
@@ -206,10 +217,10 @@ func (c *Vibecheck) handleMessageEvent(ctx context.Context, ev *slackevents.Mess
 			)
 		}
 
-		if !passed && !slices.Contains(c.config.PreferredUsers, ev.User) && !slices.Contains(c.config.PreferredUsers, ev.Username) {
-			// Add user to the kicked users list with configured timeout
-			c.kickedUsers.AddKickedUser(ev.User, ev.Channel, c.config.BanDuration)
-
+		if !passed && !slices.Contains(config.PreferredUsers, ev.User) &&
+			!slices.Contains(config.PreferredUsers, ev.Username) {
+			// Persist before the external call so join events cannot race ahead of ban state.
+			c.kickedUsers.AddKickedUser(ev.User, ev.Channel, config.BanDuration)
 			time.AfterFunc(5*time.Second, func() {
 				if err := c.slack.Client().KickUserFromConversationContext(ctx, ev.Channel, ev.User); err != nil {
 					c.log.Error("Failed to kick user from channel",
@@ -217,12 +228,13 @@ func (c *Vibecheck) handleMessageEvent(ctx context.Context, ev *slackevents.Mess
 						zap.String("user", ev.User),
 						zap.Error(err),
 					)
-				} else {
-					c.log.Info("User kicked from channel due to low vibe.",
-						zap.String("channel", ev.Channel),
-						zap.String("user", ev.User),
-					)
+					return
 				}
+
+				c.log.Info("User kicked from channel due to low vibe.",
+					zap.String("channel", ev.Channel),
+					zap.String("user", ev.User),
+				)
 			})
 		}
 	}
@@ -286,11 +298,18 @@ func (c *Vibecheck) handleMemberJoinedEvent(ctx context.Context, ev *slackevents
 	}
 }
 
-// SetConfig updates the vibecheck configuration with values from the centralized config
-func (c *Vibecheck) SetConfig(cfg FileConfig) error {
+// SetConfig updates the vibecheck configuration with values from the centralized config.
+func (c *Vibecheck) SetConfig(cfg Config) {
 	c.log.Debug("Updating vibecheck configuration")
-	c.fileConfig = cfg
-	return nil
+	c.configMu.Lock()
+	c.config = cfg
+	c.configMu.Unlock()
+}
+
+func (c *Vibecheck) getConfig() Config {
+	c.configMu.RLock()
+	defer c.configMu.RUnlock()
+	return c.config
 }
 
 // checkReinvites periodically checks for users to reinvite
@@ -335,14 +354,16 @@ func (c *Vibecheck) processReinvites(ctx context.Context) {
 				zap.String("user", user.UserID),
 				zap.Error(err),
 			)
-		} else {
-			c.log.Info("Successfully reinvited user to channel after timeout",
-				zap.String("channel", user.ChannelID),
-				zap.String("user", user.UserID),
-				zap.Time("kicked_at", user.KickedAt),
-				zap.Time("reinvited_at", time.Now()),
-			)
+			continue
 		}
+
+		c.kickedUsers.MarkReinvited(user)
+		c.log.Info("Successfully reinvited user to channel after timeout",
+			zap.String("channel", user.ChannelID),
+			zap.String("user", user.UserID),
+			zap.Time("kicked_at", user.KickedAt),
+			zap.Time("reinvited_at", time.Now()),
+		)
 	}
 
 	c.kickedUsers.CleanupReinvitedUsers()

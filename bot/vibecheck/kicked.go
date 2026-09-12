@@ -2,6 +2,7 @@ package vibecheck
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -66,18 +67,18 @@ func (m *kickedUsersManager) generateKey(userID, channelID string) string {
 func (k *kickedUsersManager) IsUserBanned(userID, channelID string) (kickedUser, bool) {
 	k.mu.RLock()
 	defer k.mu.RUnlock()
-	
+
 	key := k.generateKey(userID, channelID)
 	user, exists := k.users[key]
 	if !exists || user.Reinvited {
 		return kickedUser{}, false
 	}
-	
+
 	// Check if ban time has expired
 	if time.Now().After(user.ReinviteAt) {
 		return kickedUser{}, false
 	}
-	
+
 	return user, true
 }
 
@@ -109,13 +110,13 @@ func (m *kickedUsersManager) AddKickedUser(userID, channelID string, timeout tim
 
 // GetUsersToReinvite returns all users who should be reinvited now
 func (m *kickedUsersManager) GetUsersToReinvite() []kickedUser {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
 	var usersToReinvite []kickedUser
 	now := time.Now()
 
-	for key, user := range m.users {
+	for _, user := range m.users {
 		if !user.Reinvited && now.After(user.ReinviteAt) {
 			m.log.Debug("Found user ready for reinvite",
 				zap.String("user_id", user.UserID),
@@ -123,20 +124,26 @@ func (m *kickedUsersManager) GetUsersToReinvite() []kickedUser {
 				zap.Time("kicked_at", user.KickedAt),
 				zap.Time("reinvite_at", user.ReinviteAt),
 			)
-
 			usersToReinvite = append(usersToReinvite, user)
-
-			// Mark as reinvited
-			user.Reinvited = true
-			m.users[key] = user
 		}
 	}
 
-	if len(usersToReinvite) > 0 {
-		m.saveToDisk()
-	}
-
 	return usersToReinvite
+}
+
+// MarkReinvited records a successful reinvite if the ban has not since been replaced.
+func (m *kickedUsersManager) MarkReinvited(reinvited kickedUser) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	key := m.generateKey(reinvited.UserID, reinvited.ChannelID)
+	user, exists := m.users[key]
+	if !exists || !user.KickedAt.Equal(reinvited.KickedAt) {
+		return
+	}
+	user.Reinvited = true
+	m.users[key] = user
+	m.saveToDisk()
 }
 
 // CleanupReinvitedUsers removes users who have been reinvited for more than a day
@@ -162,7 +169,8 @@ func (m *kickedUsersManager) CleanupReinvitedUsers() {
 	}
 }
 
-// saveToDisk saves the kicked users data to a JSON file
+// saveToDisk saves the kicked users data to a JSON file.
+// The caller must hold m.mu.
 func (m *kickedUsersManager) saveToDisk() {
 	data, err := json.MarshalIndent(m.users, "", "  ")
 	if err != nil {
@@ -170,15 +178,41 @@ func (m *kickedUsersManager) saveToDisk() {
 		return
 	}
 
-	err = os.WriteFile(m.filePath, data, 0600)
+	tempFile, err := os.CreateTemp(m.dataDir, ".kicked_users-*.tmp")
+	if err != nil {
+		m.log.Error("Failed to create temporary kicked users file", zap.Error(err))
+		return
+	}
+	tempPath := tempFile.Name()
+	defer func() { _ = os.Remove(tempPath) }()
+
+	err = tempFile.Chmod(0600)
+	if err == nil {
+		var written int
+		written, err = tempFile.Write(data)
+		if err == nil && written != len(data) {
+			err = io.ErrShortWrite
+		}
+	}
+	if err == nil {
+		err = tempFile.Sync()
+	}
+	closeErr := tempFile.Close()
+	if err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		err = os.Rename(tempPath, m.filePath)
+	}
 	if err != nil {
 		m.log.Error("Failed to save kicked users data", zap.Error(err), zap.String("path", m.filePath))
-	} else {
-		m.log.Debug("Saved kicked users data to disk",
-			zap.String("path", m.filePath),
-			zap.Int("num_users", len(m.users)),
-		)
+		return
 	}
+
+	m.log.Debug("Saved kicked users data to disk",
+		zap.String("path", m.filePath),
+		zap.Int("num_users", len(m.users)),
+	)
 }
 
 // loadFromDisk loads kicked users data from the JSON file
@@ -196,10 +230,14 @@ func (m *kickedUsersManager) loadFromDisk() {
 	err = json.Unmarshal(data, &m.users)
 	if err != nil {
 		m.log.Error("Failed to unmarshal kicked users data", zap.Error(err))
-	} else {
-		m.log.Debug("Loaded kicked users data from disk",
-			zap.String("path", m.filePath),
-			zap.Int("num_users", len(m.users)),
-		)
+		m.users = make(map[string]kickedUser)
+		return
 	}
+	if m.users == nil {
+		m.users = make(map[string]kickedUser)
+	}
+	m.log.Debug("Loaded kicked users data from disk",
+		zap.String("path", m.filePath),
+		zap.Int("num_users", len(m.users)),
+	)
 }

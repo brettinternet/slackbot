@@ -277,23 +277,28 @@ func TestDefault(t *testing.T) {
 
 func TestNewConfig(t *testing.T) {
 	opts := configOpts{
-		Version:               "1.0.0",
-		BuildTime:             "2023-01-01",
-		LogLevel:              "debug",
-		Environment:           "development",
-		DataDir:               "/custom/data",
-		ServerPort:            9000,
-		SlackToken:            "test-token",
-		SlackSigningSecret:    "test-secret",
-		OpenAIAPIKey:          "test-key",
-		OpenAIModel:           "gpt-5.6-luna",
-		OpenAIReasoningEffort: "low",
-		PreferredUsers:        []string{"user1", "user2"},
-		PreferredChannels:     []string{"channel1"},
-		UserNotifyChannel:     "user-notify",
-		SlackEventsPath:       "/events",
-		ConfigFile:            "./config.yaml",
-		VibecheckBanDuration:  10 * time.Minute,
+		Version:                "1.0.0",
+		BuildTime:              "2023-01-01",
+		LogLevel:               "debug",
+		Environment:            "development",
+		DataDir:                "/custom/data",
+		ServerPort:             9000,
+		SlackToken:             "test-token",
+		SlackSigningSecret:     "test-secret",
+		OpenAIAPIKey:           "test-key",
+		OpenAIModel:            "gpt-5.6-luna",
+		OpenAIReasoningEffort:  "low",
+		PreferredUsers:         []string{"user1", "user2"},
+		PreferredChannels:      []string{"channel1"},
+		UserNotifyChannel:      "user-notify",
+		SlackEventsPath:        "/events",
+		ConfigFile:             "./config.yaml",
+		VibecheckEnabled:       true,
+		VibecheckBanDuration:   10 * time.Minute,
+		VibecheckGoodReactions: []string{"party"},
+		VibecheckGoodText:      []string{"passed"},
+		VibecheckBadReactions:  []string{"warning"},
+		VibecheckBadText:       []string{"failed"},
 	}
 
 	config, err := newConfig(opts)
@@ -319,9 +324,18 @@ func TestNewConfig(t *testing.T) {
 		t.Errorf("newConfig() Slack.Token = %v, want %v", config.Slack.Token, "test-token")
 	}
 
-	// Test vibecheck ban duration configuration
+	// Test vibecheck configuration
+	if !config.Vibecheck.Enabled {
+		t.Error("newConfig() Vibecheck.Enabled = false, want true")
+	}
 	if config.Vibecheck.BanDuration != 10*time.Minute {
 		t.Errorf("newConfig() Vibecheck.BanDuration = %v, want %v", config.Vibecheck.BanDuration, 10*time.Minute)
+	}
+	if got := config.Vibecheck.GoodReactions; len(got) != 1 || got[0] != "party" {
+		t.Errorf("newConfig() Vibecheck.GoodReactions = %v, want [party]", got)
+	}
+	if got := config.Vibecheck.BadText; len(got) != 1 || got[0] != "failed" {
+		t.Errorf("newConfig() Vibecheck.BadText = %v, want [failed]", got)
 	}
 
 	if config.AI.Model != "gpt-5.6-luna" {

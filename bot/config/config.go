@@ -121,8 +121,13 @@ type configOpts struct {
 	AIChatMaxContextAge      time.Duration
 	AIChatMaxContextTokens   int
 	AIChatRateLimitEnabled   bool
-	// Vibecheck ban duration
-	VibecheckBanDuration time.Duration
+	// Vibecheck configuration
+	VibecheckEnabled       bool
+	VibecheckBanDuration   time.Duration
+	VibecheckGoodReactions []string
+	VibecheckGoodText      []string
+	VibecheckBadReactions  []string
+	VibecheckBadText       []string
 	// Chat responses
 	ChatResponses []chat.Response
 	// Showerthought
@@ -207,9 +212,14 @@ func newConfig(opts configOpts) (Config, error) {
 			Responses: opts.ChatResponses,
 		},
 		Vibecheck: vibecheck.Config{
+			Enabled:        opts.VibecheckEnabled,
 			PreferredUsers: opts.PreferredUsers,
 			DataDir:        dataDir,
 			BanDuration:    opts.VibecheckBanDuration,
+			GoodReactions:  opts.VibecheckGoodReactions,
+			GoodText:       opts.VibecheckGoodText,
+			BadReactions:   opts.VibecheckBadReactions,
+			BadText:        opts.VibecheckBadText,
 		},
 		AI: ai.Config{
 			OpenAIAPIKey:    opts.OpenAIAPIKey,
