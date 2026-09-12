@@ -41,7 +41,7 @@ Individual tools:
 - `golangci-lint run --timeout 5m` - Comprehensive linting
 - `gosec ./...` - Security scanning
 - `errcheck ./...` - Error checking
-- `dprint check` / `dprint fmt` - Config file formatting
+- Put worktrees in ./.worktrees
 
 ### Building
 
