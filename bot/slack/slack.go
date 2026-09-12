@@ -84,6 +84,23 @@ func (s *Slack) Client() *slack.Client {
 	return s.client
 }
 
+// User watcher API methods keep the watcher independent of the concrete Slack client.
+func (s *Slack) GetUsersContext(ctx context.Context) ([]slack.User, error) {
+	return s.client.GetUsersContext(ctx)
+}
+
+func (s *Slack) PostMessageContext(ctx context.Context, channel string, options ...slack.MsgOption) (string, string, error) {
+	return s.client.PostMessageContext(ctx, channel, options...)
+}
+
+func (s *Slack) GetConversationInfoContext(ctx context.Context, input *slack.GetConversationInfoInput) (*slack.Channel, error) {
+	return s.client.GetConversationInfoContext(ctx, input)
+}
+
+func (s *Slack) AuthTestContext(ctx context.Context) (*slack.AuthTestResponse, error) {
+	return s.client.AuthTestContext(ctx)
+}
+
 // AddReaction adds a reaction to a Slack message.
 func (s *Slack) AddReaction(ctx context.Context, reaction, channel, timestamp string) error {
 	return s.client.AddReactionContext(

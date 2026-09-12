@@ -7,7 +7,23 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
+	"go.uber.org/zap"
 )
+
+func TestNotifySubscribersPreservesReloadOrder(t *testing.T) {
+	var versions []string
+	manager := &ConfigManager{
+		log: zap.NewNop(),
+		subscribers: []func(*Config){func(config *Config) {
+			versions = append(versions, config.Version)
+		}},
+	}
+	manager.notifySubscribers(&Config{Version: "first"})
+	manager.notifySubscribers(&Config{Version: "second"})
+	if got := versions; len(got) != 2 || got[0] != "first" || got[1] != "second" {
+		t.Fatalf("subscriber versions = %v", got)
+	}
+}
 
 func TestExtractCLIOverrides_EnvironmentVariables(t *testing.T) {
 	// Test that environment variables are properly captured even when not set via CLI

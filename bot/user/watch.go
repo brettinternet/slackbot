@@ -3,572 +3,820 @@ package user
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/slack-go/slack"
+	"github.com/slack-go/slack/slackevents"
 	"go.uber.org/zap"
 )
 
-const watchInterval = 1 * time.Minute
+const watchInterval = time.Minute
+const stateSchemaVersion = 2
 
-type slackService interface {
-	Client() *slack.Client
-	OrgURL() string
+var ErrAlreadyStarted = errors.New("user watcher already started")
+
+type slackService interface{ OrgURL() string }
+
+type userSlackAPI interface {
+	GetUsersContext(context.Context) ([]slack.User, error)
+	PostMessageContext(context.Context, string, ...slack.MsgOption) (string, string, error)
+	GetConversationInfoContext(context.Context, *slack.GetConversationInfoInput) (*slack.Channel, error)
+	AuthTestContext(context.Context) (*slack.AuthTestResponse, error)
 }
 
-// User represents a simplified Slack user for persistence
+type clientAPI struct{ client *slack.Client }
+
+func (c clientAPI) GetUsersContext(ctx context.Context) ([]slack.User, error) {
+	return c.client.GetUsersContext(ctx)
+}
+func (c clientAPI) PostMessageContext(ctx context.Context, channel string, options ...slack.MsgOption) (string, string, error) {
+	return c.client.PostMessageContext(ctx, channel, options...)
+}
+func (c clientAPI) GetConversationInfoContext(ctx context.Context, input *slack.GetConversationInfoInput) (*slack.Channel, error) {
+	return c.client.GetConversationInfoContext(ctx, input)
+}
+func (c clientAPI) AuthTestContext(ctx context.Context) (*slack.AuthTestResponse, error) {
+	return c.client.AuthTestContext(ctx)
+}
+
 type User struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
 	RealName string `json:"real_name"`
 }
-
 type Config struct {
 	NotifyChannel string
 	DataDir       string
 }
-
 type FileConfig struct {
 	NotifyChannel *string `json:"notify_channel" yaml:"notify_channel"`
 }
 
-type UserWatch struct {
-	log           *zap.Logger
-	slack         slackService
-	notifyChannel string
-	ticker        *time.Ticker
-	cancel        context.CancelFunc
-	mutex         sync.Mutex
-	knownUsers    map[string]*slack.User
-	usersFile     string
+type notification struct {
+	Type string `json:"type"`
+	User User   `json:"user,omitempty"`
+}
+type persistedState struct {
+	SchemaVersion   int            `json:"schema_version"`
+	WorkspaceID     string         `json:"workspace_id"`
+	Users           []User         `json:"users"`
+	Pending         []notification `json:"pending_notifications,omitempty"`
+	StartupNotified bool           `json:"startup_notified"`
 }
 
-func NewUserWatch(log *zap.Logger, c Config, s slackService) *UserWatch {
+type UserWatch struct {
+	log             *zap.Logger
+	slack           slackService
+	api             userSlackAPI
+	lifecycleMu     sync.Mutex
+	saveMu          sync.Mutex
+	stateMu         sync.Mutex
+	notifyChannel   string
+	knownUsers      map[string]*slack.User
+	workspaceID     string
+	pending         []notification
+	startupNotified bool
+	usersFile       string
+	stateFile       string
+	lifecycleCtx    context.Context
+	lifecycleCancel context.CancelFunc
+	cancel          context.CancelFunc
+	workerDone      chan struct{}
+	started         bool
+	eventCh         chan struct{}
+}
+
+// NewUserWatch accepts the Slack service while retaining compatibility with callers that
+// provide only the historical Client and OrgURL methods.
+func NewUserWatch(log *zap.Logger, c Config, s interface{ OrgURL() string }) *UserWatch {
+	service := slackService(s)
+	var api userSlackAPI
+	if candidate, ok := s.(userSlackAPI); ok {
+		api = candidate
+	}
+	if api == nil {
+		if candidate, ok := s.(interface{ Client() *slack.Client }); ok {
+			if client := candidate.Client(); client != nil {
+				api = clientAPI{client: client}
+			}
+		}
+	}
+	usersFile, stateFile := "", ""
 	if c.DataDir != "" {
 		if _, err := os.Stat(c.DataDir); os.IsNotExist(err) {
 			if err := os.MkdirAll(c.DataDir, 0750); err != nil {
-				log.Error("Failed to create data directory", zap.String("dir", c.DataDir), zap.Error(err))
+				log.Error("create user watcher data directory", zap.Error(err))
 			}
 		}
-	}
-
-	usersFile := ""
-	if c.DataDir != "" {
 		usersFile = filepath.Join(c.DataDir, "users.json")
+		stateFile = filepath.Join(c.DataDir, "user-watch-state.json")
 	}
-
-	return &UserWatch{
-		log:           log,
-		notifyChannel: c.NotifyChannel,
-		knownUsers:    make(map[string]*slack.User),
-		usersFile:     usersFile,
-		slack:         s,
-	}
+	return &UserWatch{log: log, slack: service, api: api, notifyChannel: c.NotifyChannel, knownUsers: make(map[string]*slack.User), usersFile: usersFile, stateFile: stateFile, eventCh: make(chan struct{}, 1)}
 }
 
 func (o *UserWatch) Start(ctx context.Context) error {
-	if o.notifyChannel == "" {
-		return fmt.Errorf("notification channel is not set")
+	o.lifecycleMu.Lock()
+	defer o.lifecycleMu.Unlock()
+
+	o.stateMu.Lock()
+	if o.lifecycleCtx != nil {
+		o.stateMu.Unlock()
+		return ErrAlreadyStarted
+	}
+	channel := o.notifyChannel
+	o.stateMu.Unlock()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	lifecycleCtx, lifecycleCancel := context.WithCancel(ctx)
+	o.stateMu.Lock()
+	o.lifecycleCtx = lifecycleCtx
+	o.lifecycleCancel = lifecycleCancel
+	o.stateMu.Unlock()
+	if channel == "" {
+		o.log.Info("User watcher disabled - no notification channel configured")
+		return nil
+	}
+	if err := o.startActive(lifecycleCtx, channel); err != nil {
+		lifecycleCancel()
+		o.stateMu.Lock()
+		o.lifecycleCtx = nil
+		o.lifecycleCancel = nil
+		o.stateMu.Unlock()
+		return err
+	}
+	return nil
+}
+
+// startActive starts reconciliation. lifecycleMu must be held by the caller.
+func (o *UserWatch) startActive(ctx context.Context, channel string) error {
+	if o.api == nil {
+		return fmt.Errorf("slack watcher API is unavailable")
+	}
+	if !o.validateChannel(ctx, channel) {
+		return fmt.Errorf("notification channel is invalid or inaccessible")
 	}
 
-	// Verify the channel format and existence early
-	if !o.validateChannel(ctx) {
-		o.log.Warn("Continuing despite invalid notification channel", zap.String("channel", o.notifyChannel))
-	}
-
-	ctx, cancel := context.WithCancel(ctx)
-	o.cancel = cancel
-
-	o.ticker = time.NewTicker(watchInterval)
-
-	previousUsers, err := o.loadUsersFromDisk()
+	state, err := o.loadState()
 	if err != nil {
-		o.log.Warn("Failed to load previous users from disk", zap.Error(err))
+		return fmt.Errorf("load user watcher state: %w", err)
+	}
+	auth, err := o.api.AuthTestContext(ctx)
+	if err != nil {
+		return fmt.Errorf("get Slack workspace identity: %w", err)
+	}
+	workspaceID := auth.TeamID
+	if workspaceID == "" {
+		return fmt.Errorf("slack workspace identity is empty")
+	}
+	previous := map[string]*slack.User(nil)
+	o.stateMu.Lock()
+	// Replace, rather than append, so a stop/start on the same instance cannot
+	// duplicate notifications loaded from durable state.
+	o.pending = nil
+	o.startupNotified = false
+	o.stateMu.Unlock()
+	if state != nil && state.SchemaVersion == stateSchemaVersion && state.WorkspaceID == workspaceID {
+		previous = stateUsers(state.Users)
+		o.stateMu.Lock()
+		o.pending = append([]notification(nil), state.Pending...)
+		o.startupNotified = state.StartupNotified
+		o.stateMu.Unlock()
+	} else if state != nil && state.SchemaVersion == 1 {
+		o.log.Info("migrating legacy user baseline without emitting unverified changes")
+	} else if state != nil && state.WorkspaceID != workspaceID {
+		o.log.Warn("resetting user baseline because Slack workspace changed", zap.String("previous_workspace", state.WorkspaceID), zap.String("workspace", workspaceID))
 	}
 
-	if err := o.fetchAllUsers(ctx); err != nil {
+	current, err := o.fetchUsers(ctx)
+	if err != nil {
 		return fmt.Errorf("fetch initial user list: %w", err)
 	}
-
-	if len(previousUsers) > 0 {
-		o.log.Debug("Checking for user changes while service was down",
-			zap.Int("previous_count", len(previousUsers)),
-			zap.Int("current_count", len(o.knownUsers)))
-
-		var deletedUsers []slack.User
-		var addedUsers []slack.User
-		
-		// Check for deleted users
-		for id, user := range previousUsers {
-			if _, exists := o.knownUsers[id]; !exists {
-				deletedUsers = append(deletedUsers, *user)
-			}
-		}
-		
-		// Check for added users
-		for id, user := range o.knownUsers {
-			if _, exists := previousUsers[id]; !exists {
-				addedUsers = append(addedUsers, *user)
-			}
-		}
-
-		for _, user := range deletedUsers {
-			o.notifyUserDeleted(ctx, &user)
-		}
-		
-		for _, user := range addedUsers {
-			o.notifyUserAdded(ctx, &user)
-		}
-
-		if len(deletedUsers) > 0 {
-			o.log.Info("Detected users deleted while service was down",
-				zap.Int("count", len(deletedUsers)))
-		}
-		
-		if len(addedUsers) > 0 {
-			o.log.Info("Detected users added while service was down",
-				zap.Int("count", len(addedUsers)))
-		}
+	o.stateMu.Lock()
+	o.knownUsers = current
+	o.workspaceID = workspaceID
+	o.notifyChannel = channel
+	o.started = true
+	o.cancel = nil
+	o.workerDone = make(chan struct{})
+	done := o.workerDone
+	o.stateMu.Unlock()
+	if previous != nil {
+		o.queueDiff(ctx, previous, current)
+	}
+	if err := o.saveState(); err != nil {
+		o.log.Warn("save initial user watcher state", zap.Error(err))
 	}
 
-	if err := o.saveUsersToDisk(); err != nil {
-		o.log.Warn("Failed to save initial users to disk", zap.Error(err))
-	}
-
-	o.sendStartupMessage(ctx)
-
-	o.log.Debug("UserWatch service started, monitoring for user additions and deletions")
-
-	go func() {
-		defer o.ticker.Stop()
-		for {
-			select {
-			case <-o.ticker.C:
-				if err := o.checkForUserChanges(ctx); err != nil {
-					o.log.Error("Error checking for user changes", zap.Error(err))
-				}
-			case <-ctx.Done():
-				return
+	watchCtx, cancel := context.WithCancel(ctx)
+	o.stateMu.Lock()
+	o.cancel = cancel
+	o.stateMu.Unlock()
+	o.stateMu.Lock()
+	startupNotified := o.startupNotified
+	o.stateMu.Unlock()
+	if !startupNotified {
+		o.retryPending(watchCtx)
+		o.stateMu.Lock()
+		startupNotified = o.startupNotified
+		startupPending := false
+		for _, event := range o.pending {
+			if event.Type == "startup" {
+				startupPending = true
+				break
 			}
 		}
-	}()
-
+		o.stateMu.Unlock()
+		if !startupNotified && !startupPending {
+			o.sendStartup(watchCtx)
+		}
+	}
+	go o.worker(watchCtx, done)
 	return nil
 }
 
 func (o *UserWatch) Stop(ctx context.Context) error {
-	if err := o.saveUsersToDisk(); err != nil {
-		o.log.Warn("Failed to save users before stopping", zap.Error(err))
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	// Publish and invoke cancellation before waiting for a concurrent Start that
+	// may be blocked in Slack I/O while holding lifecycleMu.
+	o.stateMu.Lock()
+	lifecycleCancel := o.lifecycleCancel
+	workerCancel := o.cancel
+	o.stateMu.Unlock()
+	if lifecycleCancel != nil {
+		lifecycleCancel()
+	}
+	if workerCancel != nil {
+		workerCancel()
 	}
 
-	if o.cancel != nil {
-		o.cancel()
-	}
-	if o.ticker != nil {
-		o.ticker.Stop()
-	}
-	return nil
-}
-
-// fetchAllUsers gets all users from the Slack workspace and stores them in a map
-func (o *UserWatch) fetchAllUsers(ctx context.Context) error {
-	o.mutex.Lock()
-	defer o.mutex.Unlock()
-
-	o.log.Debug("Fetching all users from Slack")
-
-	var users []slack.User
-	var err error
-
-	users, err = o.slack.Client().GetUsersContext(ctx)
-	if err != nil {
-		return err
-	}
-
-	// Update our known users map
-	for _, user := range users {
-		if !isValidUser(user) {
-			continue
-		}
-		o.knownUsers[user.ID] = &user
-	}
-
-	o.log.Debug("Fetched all users", zap.Int("count", len(o.knownUsers)))
-	return nil
-}
-
-func isValidUser(user slack.User) bool {
-	return user.ID != "" && !user.Deleted && !user.IsBot
-}
-
-// checkForUserChanges compares the current user list with our stored list for additions and deletions
-func (o *UserWatch) checkForUserChanges(ctx context.Context) error {
-	o.log.Debug("Checking for user changes")
-
-	o.mutex.Lock()
-	currentUsers := make(map[string]*slack.User)
-	maps.Copy(currentUsers, o.knownUsers)
-	o.mutex.Unlock()
-
-	users, err := o.slack.Client().GetUsersContext(ctx)
-	if err != nil {
-		return err
-	}
-
-	newUserMap := make(map[string]slack.User)
-	for _, user := range users {
-		if !isValidUser(user) {
-			continue
-		}
-		newUserMap[user.ID] = user
-	}
-
-	// Find deleted users
-	var deletedUsers []slack.User
-	for id, user := range currentUsers {
-		if _, exists := newUserMap[id]; !exists {
-			deletedUsers = append(deletedUsers, *user)
-		}
-	}
-
-	// Find added users
-	var addedUsers []slack.User
-	for id, user := range newUserMap {
-		if _, exists := currentUsers[id]; !exists {
-			addedUsers = append(addedUsers, user)
-		}
-	}
-
-	// Check for modified users
-	hasChanges := len(deletedUsers) > 0 || len(addedUsers) > 0
-	if !hasChanges {
-		for id, newUser := range newUserMap {
-			if oldUser, exists := currentUsers[id]; exists &&
-				(oldUser.Name != newUser.Name ||
-					oldUser.RealName != newUser.RealName) {
-				hasChanges = true
-				break
-			}
-		}
-	}
-
-	// Update our known users map
-	o.mutex.Lock()
-	o.knownUsers = make(map[string]*slack.User)
-	for id, user := range newUserMap {
-		userCopy := user // Create a copy to avoid reference issues
-		o.knownUsers[id] = &userCopy
-	}
-	o.mutex.Unlock()
-
-	// Send notifications for deleted users
-	for _, user := range deletedUsers {
-		o.notifyUserDeleted(ctx, &user)
-	}
-
-	// Send notifications for added users
-	for _, user := range addedUsers {
-		o.notifyUserAdded(ctx, &user)
-	}
-
-	if len(deletedUsers) > 0 {
-		o.log.Info("Detected deleted users.", zap.Int("count", len(deletedUsers)))
-	}
-
-	if len(addedUsers) > 0 {
-		o.log.Info("Detected added users.", zap.Int("count", len(addedUsers)))
-	}
-
-	if hasChanges {
-		o.log.Debug("Changes detected in user list, saving to disk.")
-		if err := o.saveUsersToDisk(); err != nil {
-			o.log.Warn("Failed to save users to disk.", zap.Error(err))
-		}
-	}
-
-	return nil
-}
-
-// notifyUserAdded sends a notification to the configured channel about a new user
-func (o *UserWatch) notifyUserAdded(ctx context.Context, user *slack.User) {
-	o.log.Info("User added.", zap.String("user_id", user.ID), zap.String("user_name", user.RealName))
-
-	var identity string
-	if user.RealName != "" && user.RealName != user.Name {
-		identity = fmt.Sprintf("*%s* (%s)", user.RealName, user.Name)
-	} else {
-		identity = fmt.Sprintf("*%s*", user.Name)
-	}
-	userTitle := "User"
-	if user.IsBot {
-		userTitle = "Bot"
-	}
-
-	message := fmt.Sprintf("%s %s has been added to the Slack organization.", userTitle, identity)
-	profileLink := fmt.Sprintf("%steam/%s", o.slack.OrgURL(), user.ID)
-	actions := []slack.AttachmentAction{
-		{
-			Type: "button",
-			Text: "View Profile",
-			URL:  profileLink,
-		},
-	}
-	if user.Profile.RealName != "" && !user.IsBot {
-		actions = append(actions, slack.AttachmentAction{
-			Type: "button",
-			Text: "View LinkedIn",
-			URL:  linkedinURL(user.Profile.RealName),
-		})
-	}
-	attachment := slack.Attachment{
-		Color:      "#36a64f", // Green color
-		Title:      fmt.Sprintf(":wave: %s Added", userTitle),
-		Text:       message,
-		Footer:     fmt.Sprintf("%s ID: %s; Monitoring %d total users", userTitle, user.ID, len(o.knownUsers)),
-		FooterIcon: "https://platform.slack-edge.com/img/default_application_icon.png",
-		Ts:         json.Number(fmt.Sprintf("%d", time.Now().Unix())),
-		Actions:    actions,
-	}
-
-	_, _, err := o.slack.Client().PostMessageContext(
-		ctx,
-		o.notifyChannel,
-		slack.MsgOptionAttachments(attachment),
-		slack.MsgOptionAsUser(true),
-	)
-	if err != nil {
-		o.log.Error("send notification", zap.Error(err), zap.String("channel", o.notifyChannel))
-	}
-}
-
-// TODO: batch attachments together in single message for multiple users
-// notifyUserDeleted sends a notification to the configured channel about a deleted user
-func (o *UserWatch) notifyUserDeleted(ctx context.Context, user *slack.User) {
-	o.log.Info("User deleted.", zap.String("user_id", user.ID), zap.String("user_name", user.RealName))
-
-	var identity string
-	if user.RealName != "" && user.RealName != user.Name {
-		identity = fmt.Sprintf("*%s* (%s)", user.RealName, user.Name)
-	} else {
-		identity = fmt.Sprintf("*%s*", user.Name)
-	}
-	userTitle := "User"
-	if user.IsBot {
-		userTitle = "Bot"
-	}
-
-	message := fmt.Sprintf("%s %s has been deleted from the Slack organization.", userTitle, identity)
-	profileLink := fmt.Sprintf("%steam/%s", o.slack.OrgURL(), user.ID)
-	actions := []slack.AttachmentAction{
-		{
-			Type: "button",
-			Text: "View Profile",
-			URL:  profileLink,
-		},
-	}
-	if user.Profile.RealName != "" && !user.IsBot {
-		actions = append(actions, slack.AttachmentAction{
-			Type: "button",
-			Text: "View LinkedIn",
-			URL:  linkedinURL(user.Profile.RealName),
-		})
-	}
-	attachment := slack.Attachment{
-		Color:      "#FF5733", // Red-orange color
-		Title:      fmt.Sprintf(":rip: %s Deleted", userTitle),
-		Text:       message,
-		Footer:     fmt.Sprintf("%s ID: %s; Monitoring %d remaining users", userTitle, user.ID, len(o.knownUsers)),
-		FooterIcon: "https://platform.slack-edge.com/img/default_application_icon.png",
-		Ts:         json.Number(fmt.Sprintf("%d", time.Now().Unix())),
-		Actions:    actions,
-	}
-
-	_, _, err := o.slack.Client().PostMessageContext(
-		ctx,
-		o.notifyChannel,
-		slack.MsgOptionAttachments(attachment),
-		slack.MsgOptionAsUser(true),
-	)
-	if err != nil {
-		o.log.Error("send notification", zap.Error(err), zap.String("channel", o.notifyChannel))
-	}
-}
-
-func linkedinURL(name string) string {
-	return fmt.Sprintf("https://www.linkedin.com/search/results/people/?keywords=%s", url.PathEscape(name))
-}
-
-// sendStartupMessage sends a notification to the configured channel to confirm the bot is running
-// but only if the bot hasn't posted any messages to the channel before
-func (o *UserWatch) sendStartupMessage(ctx context.Context) {
-	authTest, err := o.slack.Client().AuthTestContext(ctx)
-	if err != nil {
-		o.log.Error("Failed to get bot identity, sending notification anyway", zap.Error(err))
-	} else {
-		botUserID := authTest.UserID
-		o.log.Debug("Bot identity", zap.String("user_id", botUserID), zap.String("bot_name", authTest.User))
-
-		if !o.validateChannel(ctx) {
-			o.log.Error("Skipping startup notification due to channel validation failure")
-			return
-		}
-
-		history, err := o.slack.Client().GetConversationHistoryContext(ctx, &slack.GetConversationHistoryParameters{
-			ChannelID: o.notifyChannel,
-			Limit:     100,
-		})
-		if err != nil {
-			o.log.Error("Failed to get channel history, sending notification anyway",
-				zap.Error(err),
-				zap.String("channel", o.notifyChannel))
-		} else {
-			for _, msg := range history.Messages {
-				if (msg.User == botUserID || (msg.BotID != "" && msg.Username == authTest.User)) && isIntroMessage(msg) {
-					o.log.Debug("Bot has already posted messages to the channel, skipping startup notification")
-					return
-				}
-			}
-		}
-	}
-
-	o.log.Info("Sending startup notification", zap.String("channel", o.notifyChannel))
-
-	attachment := slack.Attachment{
-		Color:      "#36a64f", // Green color
-		Title:      "Status",
-		Text:       "🟢 *Slack user monitoring feature is now running*",
-		Footer:     fmt.Sprintf("Monitoring %d users", len(o.knownUsers)),
-		FooterIcon: "https://platform.slack-edge.com/img/default_application_icon.png",
-		Ts:         json.Number(fmt.Sprintf("%d", time.Now().Unix())),
-	}
-
-	_, _, err = o.slack.Client().PostMessageContext(
-		ctx,
-		o.notifyChannel,
-		slack.MsgOptionAttachments(attachment),
-		slack.MsgOptionAsUser(true),
-	)
-	if err != nil {
-		// Log the channel ID for debugging purposes
-		o.log.Error("Failed to send startup notification - check that the channel ID is correct and in the format 'C0123456789'",
-			zap.Error(err),
-			zap.String("channel", o.notifyChannel))
-
-		// The channel ID is likely incorrect. Let's output some recommendations.
-		if err.Error() == "channel_not_found" {
-			o.log.Warn("The channel may not exist or the bot may not have been added to the channel.",
-				zap.String("channel", o.notifyChannel),
-				zap.String("recommendation", "Make sure to invite the bot to the channel or check the channel ID"))
-		}
-	}
-}
-
-func isIntroMessage(msg slack.Message) bool {
-	for _, a := range msg.Attachments {
-		if a.Title == "Status" && strings.Contains(a.Text, "user monitoring feature") {
-			return true
-		}
-	}
-	return false
-}
-
-// saveUsersToDisk saves the current known users to disk
-func (o *UserWatch) saveUsersToDisk() error {
-	if o.usersFile == "" {
-		o.log.Debug("No users file configured, skipping save")
+	o.lifecycleMu.Lock()
+	defer o.lifecycleMu.Unlock()
+	o.stateMu.Lock()
+	lifecycleCtx := o.lifecycleCtx
+	o.stateMu.Unlock()
+	if lifecycleCtx == nil {
 		return nil
 	}
-
-	o.mutex.Lock()
-	defer o.mutex.Unlock()
-
-	users := make([]User, 0, len(o.knownUsers))
-	for _, user := range o.knownUsers {
-		users = append(users, User{
-			ID:       user.ID,
-			Name:     user.Name,
-			RealName: user.RealName,
-		})
+	var err error
+	if o.isStarted() {
+		err = o.stopActive(ctx)
 	}
-
-	tempFile := o.usersFile + ".tmp"
-
-	data, err := json.MarshalIndent(users, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal users: %w", err)
-	}
-
-	if err := os.WriteFile(tempFile, data, 0600); err != nil {
-		return fmt.Errorf("write temp file: %w", err)
-	}
-
-	if err := os.Rename(tempFile, o.usersFile); err != nil {
-		return fmt.Errorf("rename temp file: %w", err)
-	}
-
-	o.log.Debug("Saved users to disk", zap.String("file", o.usersFile), zap.Int("count", len(users)))
-	return nil
+	o.stateMu.Lock()
+	o.lifecycleCtx = nil
+	o.lifecycleCancel = nil
+	o.stateMu.Unlock()
+	return err
 }
 
-func (o *UserWatch) loadUsersFromDisk() (map[string]*slack.User, error) {
-	if o.usersFile == "" {
-		o.log.Debug("No users file configured, skipping load")
-		return nil, nil
-	}
+func (o *UserWatch) isStarted() bool {
+	o.stateMu.Lock()
+	defer o.stateMu.Unlock()
+	return o.started
+}
 
-	if _, err := os.Stat(o.usersFile); os.IsNotExist(err) {
-		o.log.Debug("Users file doesn't exist, no previous state to load", zap.String("file", o.usersFile))
-		return nil, nil
+// stopActive stops the worker and clears active lifecycle state even when the
+// final durable save fails. lifecycleMu must be held by the caller.
+func (o *UserWatch) stopActive(ctx context.Context) error {
+	o.stateMu.Lock()
+	cancel, done := o.cancel, o.workerDone
+	o.stateMu.Unlock()
+	if cancel != nil {
+		cancel()
 	}
-
-	data, err := os.ReadFile(o.usersFile)
-	if err != nil {
-		return nil, fmt.Errorf("read users file: %w", err)
+	if done != nil {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
+	err := o.saveState()
+	o.stateMu.Lock()
+	o.started = false
+	o.cancel = nil
+	o.workerDone = nil
+	o.stateMu.Unlock()
+	return err
+}
 
-	var users []User
-	if err := json.Unmarshal(data, &users); err != nil {
-		return nil, fmt.Errorf("unmarshal users: %w", err)
+func (o *UserWatch) worker(ctx context.Context, done chan struct{}) {
+	defer func() {
+		o.stateMu.Lock()
+		if o.workerDone == done {
+			o.started = false
+			o.cancel = nil
+			o.workerDone = nil
+			if o.lifecycleCtx != nil && o.lifecycleCtx.Err() != nil {
+				o.lifecycleCtx = nil
+				o.lifecycleCancel = nil
+			}
+		}
+		o.stateMu.Unlock()
+		close(done)
+	}()
+	ticker := time.NewTicker(watchInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			if o.isEnabled() {
+				o.retryPending(ctx)
+				if err := o.checkForUserChanges(ctx); err != nil {
+					o.log.Error("reconcile Slack users", zap.Error(err))
+				}
+			}
+		case <-o.eventCh:
+			if o.isEnabled() {
+				if err := o.checkForUserChanges(ctx); err != nil {
+					o.log.Error("reconcile Slack users after event", zap.Error(err))
+				}
+			}
+		case <-ctx.Done():
+			return
+		}
 	}
+}
 
-	result := make(map[string]*slack.User)
-	for _, user := range users {
-		result[user.ID] = &slack.User{
-			ID:       user.ID,
-			Name:     user.Name,
-			RealName: user.RealName,
+func (o *UserWatch) PushEvent(event slackevents.EventsAPIEvent) {
+	if event.InnerEvent.Type == "team_join" || event.InnerEvent.Type == "user_change" {
+		select {
+		case o.eventCh <- struct{}{}:
+		default:
+		}
+	}
+}
+func (o *UserWatch) ProcessorType() string { return "user-watch" }
+
+// UpdateNotifyChannel validates a replacement before making it visible to workers.
+// If Start was called while disabled, enabling the channel starts reconciliation
+// on the long-lived Start context rather than on this short-lived callback context.
+func (o *UserWatch) UpdateNotifyChannel(ctx context.Context, channel string) error {
+	o.lifecycleMu.Lock()
+	defer o.lifecycleMu.Unlock()
+	channel = strings.TrimSpace(channel)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	o.stateMu.Lock()
+	oldChannel := o.notifyChannel
+	lifecycleCtx := o.lifecycleCtx
+	started := o.started
+	o.stateMu.Unlock()
+	if channel == oldChannel {
+		return nil
+	}
+	if channel != "" {
+		if o.api == nil || !o.validateChannel(ctx, channel) {
+			return fmt.Errorf("notification channel is invalid or inaccessible")
 		}
 	}
 
-	o.log.Debug("Loaded users from disk", zap.String("file", o.usersFile), zap.Int("count", len(result)))
+	if channel == "" && started {
+		o.stateMu.Lock()
+		o.notifyChannel = ""
+		o.stateMu.Unlock()
+		return o.stopActive(ctx)
+	}
+	if channel != "" && lifecycleCtx != nil && !started {
+		o.stateMu.Lock()
+		o.notifyChannel = channel
+		o.stateMu.Unlock()
+		if err := o.startActive(lifecycleCtx, channel); err != nil {
+			o.stateMu.Lock()
+			o.notifyChannel = oldChannel
+			o.stateMu.Unlock()
+			return err
+		}
+		return nil
+	}
+	o.stateMu.Lock()
+	o.notifyChannel = channel
+	o.stateMu.Unlock()
+	o.log.Info("user watcher notification channel updated", zap.String("channel", channel), zap.Bool("enabled", channel != ""))
+	return nil
+}
+
+func (o *UserWatch) fetchUsers(ctx context.Context) (map[string]*slack.User, error) {
+	users, err := o.api.GetUsersContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]*slack.User, len(users))
+	for _, user := range users {
+		if isValidUser(user) {
+			copy := user
+			result[user.ID] = &copy
+		} else if user.ID != "" {
+			o.log.Debug("skipping non-human Slack account", zap.String("user_id", user.ID), zap.Bool("bot", user.IsBot), zap.Bool("guest", user.IsRestricted || user.IsUltraRestricted), zap.Bool("deleted", user.Deleted))
+		}
+	}
 	return result, nil
 }
 
-func (o *UserWatch) validateChannel(ctx context.Context) bool {
-	if len(o.notifyChannel) < 9 || !strings.HasPrefix(o.notifyChannel, "C") {
-		o.log.Warn("Channel ID format may be invalid - should typically be 'C' followed by alphanumeric chars",
-			zap.String("channel", o.notifyChannel))
-	}
+func isValidUser(user slack.User) bool {
+	return user.ID != "" && !user.Deleted && !user.IsBot && !user.IsRestricted && !user.IsUltraRestricted
+}
 
-	_, err := o.slack.Client().GetConversationInfoContext(ctx, &slack.GetConversationInfoInput{
-		ChannelID:     o.notifyChannel,
-		IncludeLocale: false,
-	})
+func (o *UserWatch) checkForUserChanges(ctx context.Context) error {
+	o.stateMu.Lock()
+	current := copyUsers(o.knownUsers)
+	o.stateMu.Unlock()
+	newUsers, err := o.fetchUsers(ctx)
 	if err != nil {
-		o.log.Error("Channel not found or not accessible - check the channel ID and bot permissions",
-			zap.Error(err),
-			zap.String("channel", o.notifyChannel),
-			zap.String("recommendation", "Make sure to invite the bot to the channel"))
+		return err
+	}
+	var removed, added []slack.User
+	modified := 0
+	for id, user := range current {
+		if _, ok := newUsers[id]; !ok {
+			removed = append(removed, *user)
+		}
+	}
+	for id, user := range newUsers {
+		old, ok := current[id]
+		if !ok {
+			added = append(added, *user)
+		} else if old.Name != user.Name || old.RealName != user.RealName {
+			modified++
+		}
+	}
+	sort.Slice(removed, func(i, j int) bool { return removed[i].ID < removed[j].ID })
+	sort.Slice(added, func(i, j int) bool { return added[i].ID < added[j].ID })
+	o.stateMu.Lock()
+	o.knownUsers = newUsers
+	o.stateMu.Unlock()
+	events := make([]notification, 0, len(removed)+len(added))
+	for i := range removed {
+		events = append(events, notification{Type: "deactivated_or_removed", User: toUser(removed[i])})
+	}
+	for i := range added {
+		events = append(events, notification{Type: "added", User: toUser(added[i])})
+	}
+	if len(events) > 0 {
+		o.deliverBatchOrQueue(ctx, events)
+	}
+	if len(removed)+len(added)+modified > 0 {
+		o.log.Info("reconciled user changes", zap.Int("removed", len(removed)), zap.Int("added", len(added)), zap.Int("modified", modified), zap.Int("pending", o.pendingCount()))
+		return o.saveState()
+	}
+	return nil
+}
+
+func (o *UserWatch) queueDiff(ctx context.Context, previous, current map[string]*slack.User) {
+	var removed, added []string
+	for id := range previous {
+		if _, ok := current[id]; !ok {
+			removed = append(removed, id)
+		}
+	}
+	for id := range current {
+		if _, ok := previous[id]; !ok {
+			added = append(added, id)
+		}
+	}
+	sort.Strings(removed)
+	sort.Strings(added)
+	events := make([]notification, 0, len(removed)+len(added))
+	for _, id := range removed {
+		events = append(events, notification{Type: "deactivated_or_removed", User: toUser(*previous[id])})
+	}
+	for _, id := range added {
+		events = append(events, notification{Type: "added", User: toUser(*current[id])})
+	}
+	if len(events) > 0 {
+		o.deliverBatchOrQueue(ctx, events)
+	}
+}
+
+func toUser(u slack.User) User { return User{ID: u.ID, Name: u.Name, RealName: u.RealName} }
+func copyUsers(in map[string]*slack.User) map[string]*slack.User {
+	out := make(map[string]*slack.User, len(in))
+	for id, u := range in {
+		c := *u
+		out[id] = &c
+	}
+	return out
+}
+func stateUsers(users []User) map[string]*slack.User {
+	out := make(map[string]*slack.User, len(users))
+	for _, u := range users {
+		c := slack.User{ID: u.ID, Name: u.Name, RealName: u.RealName}
+		out[u.ID] = &c
+	}
+	return out
+}
+
+func (o *UserWatch) deliverBatchOrQueue(ctx context.Context, events []notification) {
+	if o.sendBatch(ctx, events) {
+		return
+	}
+	o.stateMu.Lock()
+	o.pending = append(o.pending, events...)
+	pending := len(o.pending)
+	o.stateMu.Unlock()
+	for _, event := range events {
+		o.log.Error("Slack notification queued for retry", zap.String("event_type", event.Type), zap.String("user_id", event.User.ID), zap.Int("pending_count", pending))
+	}
+	if err := o.saveState(); err != nil {
+		o.log.Error("persist notification queue", zap.Error(err))
+	}
+}
+
+func (o *UserWatch) retryPending(ctx context.Context) {
+	o.stateMu.Lock()
+	pending := append([]notification(nil), o.pending...)
+	o.stateMu.Unlock()
+	if len(pending) == 0 {
+		return
+	}
+	remaining := pending[:0]
+	for _, event := range pending {
+		if !o.sendNotification(ctx, event) {
+			remaining = append(remaining, event)
+		}
+	}
+	o.stateMu.Lock()
+	o.pending = remaining
+	count := len(remaining)
+	o.stateMu.Unlock()
+	o.log.Info("retried Slack notifications", zap.Int("pending_count", count))
+	if len(remaining) != len(pending) {
+		if err := o.saveState(); err != nil {
+			o.log.Error("persist notification queue", zap.Error(err))
+		}
+	}
+}
+
+func (o *UserWatch) sendBatch(ctx context.Context, events []notification) bool {
+	if len(events) == 0 {
+		return true
+	}
+	if len(events) == 1 {
+		return o.sendNotification(ctx, events[0])
+	}
+	o.stateMu.Lock()
+	channel := o.notifyChannel
+	count := len(o.knownUsers)
+	o.stateMu.Unlock()
+	if channel == "" {
 		return false
 	}
+	lines := make([]string, 0, len(events))
+	for _, event := range events {
+		name := displayName(event.User)
+		identity := "*" + escapeMrkdwn(name) + "*"
+		verb := "added"
+		if event.Type == "deactivated_or_removed" {
+			verb = "deactivated or removed"
+		}
+		lines = append(lines, fmt.Sprintf("• User %s has been %s from the Slack organization.", identity, verb))
+	}
+	attachment := slack.Attachment{Color: "#36a64f", Title: "User membership changes", Text: strings.Join(lines, "\n"), Footer: fmt.Sprintf("Monitoring %d users", count), FooterIcon: "https://platform.slack-edge.com/img/default_application_icon.png", Ts: json.Number(fmt.Sprintf("%d", time.Now().Unix()))}
+	_, _, err := o.api.PostMessageContext(ctx, channel, slack.MsgOptionAttachments(attachment), slack.MsgOptionAsUser(true))
+	if err == nil {
+		return true
+	}
+	o.log.Error("send Slack notification batch", zap.String("event_type", "reconciliation_batch"), zap.String("user_id", ""), zap.Int("pending_count", o.pendingCount()), zap.Error(err))
+	return false
+}
 
-	o.log.Debug("Channel validation successful", zap.String("channel", o.notifyChannel))
-	return true
+func (o *UserWatch) sendNotification(ctx context.Context, event notification) bool {
+	o.stateMu.Lock()
+	channel := o.notifyChannel
+	count := len(o.knownUsers)
+	o.stateMu.Unlock()
+	if channel == "" {
+		return false
+	}
+	if event.Type == "startup" {
+		attachment := slack.Attachment{Color: "#36a64f", Title: "Status", Text: "🟢 *Slack user monitoring feature is now running*", Footer: fmt.Sprintf("Monitoring %d users", count), FooterIcon: "https://platform.slack-edge.com/img/default_application_icon.png", Ts: json.Number(fmt.Sprintf("%d", time.Now().Unix()))}
+		_, _, err := o.api.PostMessageContext(ctx, channel, slack.MsgOptionAttachments(attachment), slack.MsgOptionAsUser(true))
+		if err == nil {
+			o.stateMu.Lock()
+			o.startupNotified = true
+			o.stateMu.Unlock()
+			return true
+		}
+		o.log.Error("send Slack notification", zap.String("event_type", event.Type), zap.String("user_id", ""), zap.Int("pending_count", o.pendingCount()), zap.Error(err))
+		return false
+	}
+	title, text, color := "User Added", "has been added", "#36a64f"
+	if event.Type == "deactivated_or_removed" {
+		title, text, color = "User Deactivated or Removed", "has been deactivated or removed", "#FF5733"
+	}
+	name := displayName(event.User)
+	identity := fmt.Sprintf("*%s*", escapeMrkdwn(name))
+	if event.User.RealName != "" && event.User.RealName != event.User.Name {
+		identity = fmt.Sprintf("*%s* (%s)", escapeMrkdwn(event.User.RealName), escapeMrkdwn(event.User.Name))
+	}
+	message := fmt.Sprintf("User %s %s from the Slack organization.", identity, text)
+	orgURL := ""
+	if o.slack != nil {
+		orgURL = o.slack.OrgURL()
+	}
+	actions := []slack.AttachmentAction{{Type: "button", Text: "View Profile", URL: fmt.Sprintf("%steam/%s", orgURL, event.User.ID)}}
+	if event.User.RealName != "" {
+		actions = append(actions, slack.AttachmentAction{Type: "button", Text: "View LinkedIn", URL: linkedinURL(event.User.RealName)})
+	}
+	attachment := slack.Attachment{Color: color, Title: ":wave: " + title, Text: message, Footer: fmt.Sprintf("User ID: %s; Monitoring %d users", event.User.ID, count), FooterIcon: "https://platform.slack-edge.com/img/default_application_icon.png", Ts: json.Number(fmt.Sprintf("%d", time.Now().Unix())), Actions: actions}
+	_, _, err := o.api.PostMessageContext(ctx, channel, slack.MsgOptionAttachments(attachment), slack.MsgOptionAsUser(true))
+	if err == nil {
+		return true
+	}
+	o.log.Error("send Slack notification", zap.String("event_type", event.Type), zap.String("user_id", event.User.ID), zap.Int("pending_count", o.pendingCount()), zap.Error(err))
+	return false
+}
+
+func displayName(u User) string {
+	if u.Name != "" {
+		return u.Name
+	}
+	return u.RealName
+}
+func escapeMrkdwn(value string) string {
+	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(value)
+}
+func linkedinURL(name string) string {
+	return "https://www.linkedin.com/search/results/people/?keywords=" + strings.ReplaceAll(url.QueryEscape(name), "+", "%20")
+}
+
+func (o *UserWatch) sendStartup(ctx context.Context) {
+	if !o.sendNotification(ctx, notification{Type: "startup"}) {
+		o.stateMu.Lock()
+		o.pending = append(o.pending, notification{Type: "startup"})
+		o.stateMu.Unlock()
+		o.log.Error("Slack startup notification queued for retry", zap.String("event_type", "startup"), zap.String("user_id", ""), zap.Int("pending_count", o.pendingCount()))
+		_ = o.saveState()
+	} else {
+		_ = o.saveState()
+	}
+}
+func (o *UserWatch) isEnabled() bool {
+	o.stateMu.Lock()
+	defer o.stateMu.Unlock()
+	return o.notifyChannel != ""
+}
+
+func (o *UserWatch) pendingCount() int {
+	o.stateMu.Lock()
+	defer o.stateMu.Unlock()
+	return len(o.pending)
+}
+
+func (o *UserWatch) saveState() error {
+	if o.usersFile == "" && o.stateFile == "" {
+		return nil
+	}
+	o.saveMu.Lock()
+	defer o.saveMu.Unlock()
+	o.stateMu.Lock()
+	users := make([]User, 0, len(o.knownUsers))
+	for _, u := range o.knownUsers {
+		users = append(users, toUser(*u))
+	}
+	sort.Slice(users, func(i, j int) bool { return users[i].ID < users[j].ID })
+	state := persistedState{SchemaVersion: stateSchemaVersion, WorkspaceID: o.workspaceID, Users: users, Pending: append([]notification(nil), o.pending...), StartupNotified: o.startupNotified}
+	o.stateMu.Unlock()
+	stateData, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return err
+	}
+	if o.stateFile != "" {
+		if err := writeJSONFile(o.stateFile, stateData); err != nil {
+			return err
+		}
+	}
+	// users.json remains the legacy array consumed by aichat and other callers.
+	if o.usersFile != "" {
+		usersData, err := json.MarshalIndent(users, "", "  ")
+		if err != nil {
+			return err
+		}
+		if err := writeJSONFile(o.usersFile, usersData); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeJSONFile(path string, data []byte) error {
+	temp := path + ".tmp"
+	if err := os.WriteFile(temp, data, 0600); err != nil {
+		return err
+	}
+	if err := os.Rename(temp, path); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (o *UserWatch) loadState() (*persistedState, error) {
+	if o.stateFile != "" {
+		data, err := os.ReadFile(o.stateFile)
+		if err == nil {
+			var state persistedState
+			if err := json.Unmarshal(data, &state); err != nil {
+				return nil, fmt.Errorf("unmarshal user watcher state: %w", err)
+			}
+			return &state, nil
+		}
+		if !os.IsNotExist(err) {
+			return nil, err
+		}
+	}
+	if o.usersFile == "" {
+		return nil, nil
+	}
+	data, err := os.ReadFile(o.usersFile)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var state persistedState
+	if err := json.Unmarshal(data, &state); err == nil {
+		return &state, nil
+	}
+	var users []User
+	if err := json.Unmarshal(data, &users); err != nil {
+		return nil, err
+	}
+	return &persistedState{SchemaVersion: 1, Users: users}, nil
+}
+
+// Compatibility helpers for callers that used the original baseline-only storage methods.
+func (o *UserWatch) saveUsersToDisk() error {
+	if o.usersFile == "" {
+		return nil
+	}
+	o.saveMu.Lock()
+	defer o.saveMu.Unlock()
+	o.stateMu.Lock()
+	users := make([]User, 0, len(o.knownUsers))
+	for _, u := range o.knownUsers {
+		users = append(users, toUser(*u))
+	}
+	o.stateMu.Unlock()
+	sort.Slice(users, func(i, j int) bool { return users[i].ID < users[j].ID })
+	data, err := json.MarshalIndent(users, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeJSONFile(o.usersFile, data)
+}
+func (o *UserWatch) loadUsersFromDisk() (map[string]*slack.User, error) {
+	if o.usersFile != "" {
+		data, err := os.ReadFile(o.usersFile)
+		if err == nil {
+			var users []User
+			if unmarshalErr := json.Unmarshal(data, &users); unmarshalErr == nil {
+				return stateUsers(users), nil
+			} else {
+				var state persistedState
+				if stateErr := json.Unmarshal(data, &state); stateErr == nil {
+					return stateUsers(state.Users), nil
+				}
+				return nil, unmarshalErr
+			}
+		}
+		if !os.IsNotExist(err) {
+			return nil, err
+		}
+	}
+	state, err := o.loadState()
+	if err != nil || state == nil {
+		return nil, err
+	}
+	return stateUsers(state.Users), nil
+}
+
+func (o *UserWatch) validateChannel(ctx context.Context, channels ...string) bool {
+	channel := ""
+	if len(channels) > 0 {
+		channel = channels[0]
+	} else {
+		o.stateMu.Lock()
+		channel = o.notifyChannel
+		o.stateMu.Unlock()
+	}
+	if channel == "" || len(channel) < 9 || (channel[0] != 'C' && channel[0] != 'G') || o.api == nil {
+		return false
+	}
+	conversation, err := o.api.GetConversationInfoContext(ctx, &slack.GetConversationInfoInput{ChannelID: channel, IncludeLocale: false})
+	if err != nil || conversation == nil {
+		return false
+	}
+	return !conversation.IsArchived && conversation.IsMember
 }

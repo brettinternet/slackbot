@@ -329,19 +329,22 @@ func (cm *ConfigManager) handleConfigChange() {
 // notifySubscribers notifies all subscribers of config changes
 func (cm *ConfigManager) notifySubscribers(config *Config) {
 	cm.subsMutex.RLock()
-	defer cm.subsMutex.RUnlock()
+	callbacks := append([]func(*Config){}, cm.subscribers...)
+	cm.subsMutex.RUnlock()
 
-	for _, callback := range cm.subscribers {
-		// Run callbacks in goroutines to avoid blocking
-		go func(cb func(*Config)) {
+	// Dispatch synchronously so callbacks observe the same order as config
+	// reloads. In particular, a slower callback must not apply an older config
+	// after a newer one.
+	for _, callback := range callbacks {
+		func() {
 			defer func() {
 				if r := recover(); r != nil {
 					cm.log.Error("Config subscriber callback panicked",
 						zap.Any("panic", r))
 				}
 			}()
-			cb(config)
-		}(callback)
+			callback(config)
+		}()
 	}
 }
 

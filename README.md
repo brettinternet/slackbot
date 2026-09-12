@@ -9,7 +9,7 @@ Workplace utilities for Slack.
 
 ## Features
 
-- Notify a channel when workspace users are added or removed.
+- Notify a channel when workspace users are added, deactivated, or removed.
 - Reply or react to configured message patterns.
 - Run vibechecks and temporarily remove users who fail.
 - Answer messages with OpenAI-backed, rotating personas and recent conversation context.
@@ -31,8 +31,9 @@ Edit `.env` and `config.yaml`, then start the bot:
 task start
 ```
 
-The bot requires `SLACK_TOKEN` and a user notification channel. Set either
-`SLACK_USER_NOTIFY_CHANNEL` or `user.notify_channel` in `config.yaml`.
+The bot requires `SLACK_TOKEN`. User monitoring is optional; enable it with a Slack conversation ID
+such as `C0123456789` or `G0123456789` in `SLACK_USER_NOTIFY_CHANNEL` or `user.notify_channel`.
+Grant `users:read`, `channels:read`, `groups:read`, and `chat:write`, and invite the bot to the destination.
 
 For message, vibecheck, and AI chat events:
 
@@ -81,7 +82,7 @@ services:
       DATA_DIR: /app/data
       SLACK_TOKEN: "${SLACK_TOKEN}"
       SLACK_SIGNING_SECRET: "${SLACK_SIGNING_SECRET}"
-      SLACK_USER_NOTIFY_CHANNEL: team-updates
+      SLACK_USER_NOTIFY_CHANNEL: C0123456789
       OPENAI_API_KEY: "${OPENAI_API_KEY}"
     volumes:
       - ./config.yaml:/app/config.yaml:ro

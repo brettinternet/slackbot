@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"syscall"
+	"time"
 
 	"github.com/urfave/cli/v3"
 	"go.uber.org/zap"
@@ -200,6 +201,15 @@ func (s *Bot) onConfigChange(newConfig *config.Config) {
 		}
 	}
 
+	if s.userWatch != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		err := s.userWatch.UpdateNotifyChannel(ctx, newConfig.User.NotifyChannel)
+		cancel()
+		if err != nil {
+			s.log.Error("Failed to update user watcher notification channel", zap.Error(err), zap.String("channel", newConfig.User.NotifyChannel))
+		}
+	}
+
 	// Note: AI services may need restart for some changes (like API keys)
 	// For now, we'll just log the change
 	if s.ai != nil || s.aichat != nil {
@@ -231,6 +241,9 @@ func (s *Bot) Run(runCtx context.Context) error {
 	}
 
 	if s.userWatch != nil {
+		if s.http != nil {
+			s.http.RegisterEventProcessor(s.userWatch)
+		}
 		if err := s.userWatch.Start(runCtx); err != nil {
 			return fmt.Errorf("start user watch: %w", err)
 		}
