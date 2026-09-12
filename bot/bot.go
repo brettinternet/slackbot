@@ -125,7 +125,11 @@ func (s *Bot) initializeServices(ctx context.Context) error {
 	// Keep the service running so configuration reloads can enable it and existing bans
 	// can still expire while new vibechecks are disabled.
 	vibecheckConfig := s.configManager.GetVibecheckConfig()
-	s.vibecheck = vibecheck.NewVibecheck(s.log, vibecheckConfig, s.slack)
+	vibecheckService, err := vibecheck.NewVibecheck(s.log, vibecheckConfig, s.slack.Client())
+	if err != nil {
+		return fmt.Errorf("initialize vibecheck: %w", err)
+	}
+	s.vibecheck = vibecheckService
 	s.log.Info("Vibecheck service initialized", zap.Bool("enabled", vibecheckConfig.Enabled))
 
 	// Only initialize AI services if OpenAI API key is provided
@@ -274,6 +278,13 @@ func (s *Bot) BeginShutdown(ctx context.Context) error {
 // Shutdown resources in reverse order of the Setup/Run
 func (s *Bot) Shutdown(ctx context.Context) error {
 	var errs error
+	// Stop vibecheck first so full-queue backpressure releases any webhook handlers
+	// before HTTP shutdown waits for them.
+	if s.vibecheck != nil {
+		if err := s.vibecheck.Stop(ctx); err != nil {
+			errs = errors.Join(errs, fmt.Errorf("stop vibecheck: %w", err))
+		}
+	}
 	if s.http != nil {
 		if err := s.http.Shutdown(ctx); err != nil {
 			errs = errors.Join(errs, fmt.Errorf("shutdown http server: %w", err))
@@ -297,11 +308,6 @@ func (s *Bot) Shutdown(ctx context.Context) error {
 	if s.chat != nil {
 		if err := s.chat.Stop(ctx); err != nil {
 			errs = errors.Join(errs, fmt.Errorf("stop chat: %w", err))
-		}
-	}
-	if s.vibecheck != nil {
-		if err := s.vibecheck.Stop(ctx); err != nil {
-			errs = errors.Join(errs, fmt.Errorf("stop vibecheck: %w", err))
 		}
 	}
 	if s.configManager != nil {
