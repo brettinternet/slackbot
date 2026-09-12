@@ -55,12 +55,14 @@ tasks:
     desc: Install Go binaries
     generates:
       - "{{.GO_BIN}}/air"
-      - "{{.GO_BIN}}/golint"
+      - "{{.GO_BIN}}/golangci-lint"
+      - "{{.GO_BIN}}/gosec"
+      - "{{.GO_BIN}}/errcheck"
+      - "{{.GO_BIN}}/gotestsum"
     cmds:
       - for:
           - github.com/air-verse/air@latest
-          - golang.org/x/lint/golint@latest
-          - github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.3.1
+          - github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
           - github.com/securego/gosec/v2/cmd/gosec@latest
           - github.com/kisielk/errcheck@latest
           - gotest.tools/gotestsum@latest

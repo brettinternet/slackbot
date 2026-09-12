@@ -13,17 +13,23 @@ jobs:
     if: github.actor == 'dependabot[bot]'
     steps:
       - name: Check out code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v7
         with:
-          go-version: 1.23.x
+          go-version: 1.26.x
       - name: Run tests
         run: go test ./...
-      - name: Auto-merge for minor and patch updates
-        uses: pascalgn/merge-action@v0.15.6
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@v3
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          merge_method: squash
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Auto-merge minor and patch updates
+        if: >-
+          steps.metadata.outputs.update-type == 'version-update:semver-minor' ||
+          steps.metadata.outputs.update-type == 'version-update:semver-patch'
+        run: gh pr merge --squash "$PR_URL"
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}

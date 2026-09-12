@@ -34,7 +34,7 @@ services:
 
   traefik:
     <<: *options
-    image: traefik:v3.3
+    image: traefik:v3.7.13
     container_name: traefik
     environment:
       <<: *environment
@@ -80,7 +80,7 @@ services:
 
   cloudflared-tunnel:
     <<: *options
-    image: cloudflare/cloudflared:2025.5.0
+    image: cloudflare/cloudflared:2026.9.1
     container_name: cloudflared-tunnel
     environment:
       <<: *environment
