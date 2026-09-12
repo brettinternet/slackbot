@@ -90,8 +90,9 @@ func (cs *ContextStorage) StoreContext(ctx ConversationContext) error {
 	return err
 }
 
-// GetRecentContext retrieves recent conversation context for a user/channel/persona
-func (cs *ContextStorage) GetRecentContext(userID, channelID, personaName string, config *Config) ([]ConversationContext, error) {
+// GetRecentContext retrieves recent context for a user and channel. Memory is shared
+// across persona assignments so changing style does not erase conversation continuity.
+func (cs *ContextStorage) GetRecentContext(userID, channelID string, config *Config) ([]ConversationContext, error) {
 	// Apply context limits from config
 	maxMessages := config.MaxContextMessages
 	if maxMessages <= 0 {
@@ -107,9 +108,9 @@ func (cs *ContextStorage) GetRecentContext(userID, channelID, personaName string
 	query := `
 	SELECT user_id, channel_id, persona_name, message, role, timestamp
 	FROM conversation_context
-	WHERE user_id = ? AND channel_id = ? AND persona_name = ?`
+	WHERE user_id = ? AND channel_id = ?`
 
-	args := []any{userID, channelID, personaName}
+	args := []any{userID, channelID}
 
 	// Add timestamp filter if MaxContextAge is configured
 	if !minTimestamp.IsZero() {

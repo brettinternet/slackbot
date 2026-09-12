@@ -1,6 +1,7 @@
 package aichat
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,9 +13,7 @@ import (
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 	"github.com/tmc/langchaingo/llms"
-	"github.com/tmc/langchaingo/llms/openai"
 	"go.uber.org/zap"
-	"golang.org/x/time/rate"
 )
 
 // --- Mocks ---
@@ -29,7 +28,9 @@ func (m *mockSlack) BotUserID() string     { return m.botUserID }
 
 type mockAI struct{}
 
-func (m *mockAI) LLM() *openai.LLM { return nil }
+func (m *mockAI) GenerateContent(context.Context, []llms.MessageContent, ...llms.CallOption) (*llms.ContentResponse, error) {
+	return &llms.ContentResponse{Choices: []*llms.ContentChoice{{Content: "test response"}}}, nil
+}
 
 func newTestAIChat(t *testing.T, cfg Config) *AIChat {
 	t.Helper()
@@ -41,7 +42,6 @@ func newTestAIChat(t *testing.T, cfg Config) *AIChat {
 		config:         cfg,
 		slack:          &mockSlack{botUserID: "UBOTID"},
 		ai:             &mockAI{},
-		eventlimiter:   rate.NewLimiter(rate.Inf, 1000),
 		stickyPersonas: make(map[string]personaAssignment),
 		stopCh:         make(chan struct{}),
 		eventsCh:       make(chan slackevents.EventsAPIEvent, eventChannelSize),
@@ -104,7 +104,7 @@ func TestContextStorage_StoreAndRetrieve(t *testing.T) {
 		MaxContextAge:      24 * time.Hour,
 		MaxContextTokens:   1000,
 	}
-	contexts, err := storage.GetRecentContext("U123", "C456", "test", testConfig)
+	contexts, err := storage.GetRecentContext("U123", "C456", testConfig)
 	if err != nil {
 		t.Fatalf("failed to retrieve context: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestContextStorage_MessageCountLimit(t *testing.T) {
 	}
 
 	cfg := &Config{MaxContextMessages: 3, MaxContextAge: 24 * time.Hour, MaxContextTokens: 10000}
-	contexts, err := storage.GetRecentContext("U1", "C1", "test", cfg)
+	contexts, err := storage.GetRecentContext("U1", "C1", cfg)
 	if err != nil {
 		t.Fatalf("retrieve failed: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestContextStorage_AgeFilter(t *testing.T) {
 	_ = storage.StoreContext(recent)
 
 	cfg := &Config{MaxContextMessages: 10, MaxContextAge: 1 * time.Hour, MaxContextTokens: 10000}
-	contexts, err := storage.GetRecentContext("U1", "C1", "test", cfg)
+	contexts, err := storage.GetRecentContext("U1", "C1", cfg)
 	if err != nil {
 		t.Fatalf("retrieve failed: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestContextStorage_CleanOldContext(t *testing.T) {
 	}
 
 	cfg := &Config{MaxContextMessages: 10, MaxContextAge: 0, MaxContextTokens: 10000}
-	contexts, err := storage.GetRecentContext("U1", "C1", "test", cfg)
+	contexts, err := storage.GetRecentContext("U1", "C1", cfg)
 	if err != nil {
 		t.Fatalf("retrieve failed: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestContextStorage_ChronologicalOrder(t *testing.T) {
 	}
 
 	cfg := &Config{MaxContextMessages: 10, MaxContextAge: 1 * time.Hour, MaxContextTokens: 10000}
-	contexts, err := storage.GetRecentContext("U1", "C1", "test", cfg)
+	contexts, err := storage.GetRecentContext("U1", "C1", cfg)
 	if err != nil {
 		t.Fatalf("retrieve failed: %v", err)
 	}
@@ -277,16 +277,15 @@ func TestAIChat_UserPersona_Sticky(t *testing.T) {
 		StickyDuration: 30 * time.Minute,
 	})
 
-	first := a.userPersona("UABC")
-	// Same user should get same persona while sticky
+	first := a.userPersona("C123")
 	for i := 0; i < 5; i++ {
-		if got := a.userPersona("UABC"); got != first {
+		if got := a.userPersona("C123"); got != first {
 			t.Errorf("expected sticky persona %q, got %q on call %d", first, got, i+1)
 		}
 	}
 }
 
-func TestAIChat_UserPersona_DifferentUsersCanDiffer(t *testing.T) {
+func TestAIChat_UserPersona_DifferentConversationsCanDiffer(t *testing.T) {
 	a := newTestAIChat(t, Config{
 		Personas:       map[string]string{"p1": "p1", "p2": "p2", "p3": "p3"},
 		StickyDuration: 30 * time.Minute,
@@ -294,34 +293,24 @@ func TestAIChat_UserPersona_DifferentUsersCanDiffer(t *testing.T) {
 
 	seen := make(map[string]bool)
 	for i := 0; i < 20; i++ {
-		seen[a.userPersona("U"+string(rune('A'+i)))] = true
+		seen[a.userPersona("C"+string(rune('A'+i)))] = true
 	}
-	// With 20 different users, we should have seen more than 1 distinct persona
 	if len(seen) < 2 {
-		t.Errorf("expected multiple distinct personas across users, got: %v", seen)
+		t.Errorf("expected multiple personas across conversations, got: %v", seen)
 	}
 }
 
-func TestAIChat_UserPersona_ExpiresAfterDuration(t *testing.T) {
+func TestAIChat_UserPersona_ExpiresAfterInactivity(t *testing.T) {
 	a := newTestAIChat(t, Config{
 		Personas:       map[string]string{"p1": "persona1", "p2": "persona2"},
-		StickyDuration: 1 * time.Millisecond,
+		StickyDuration: time.Minute,
 	})
 
-	first := a.userPersona("UABC")
-	time.Sleep(5 * time.Millisecond)
-
-	// After expiry, persona may change (statistically; run a few times)
-	changed := false
-	for i := 0; i < 20; i++ {
-		time.Sleep(2 * time.Millisecond)
-		if next := a.userPersona("UABC"); next != first {
-			changed = true
-			break
-		}
-	}
-	if !changed {
-		t.Log("persona did not change after expiry (may be same by chance with small persona set)")
+	first := a.userPersona("C123")
+	a.stickyPersonas["C123"] = personaAssignment{Name: first, Timestamp: time.Now().Add(-2 * time.Minute)}
+	a.userPersona("C123")
+	if a.stickyPersonas["C123"].Timestamp.Before(time.Now().Add(-time.Second)) {
+		t.Fatal("expired persona assignment was not replaced")
 	}
 }
 
@@ -344,8 +333,8 @@ func TestAIChat_IsBotMentioned(t *testing.T) {
 		{"BOT respond please", true},
 		{"@bot help me", true},
 		{"can you do this, bot?", true},
-		{"talk to the Bot!", true},
-		{"<@OTHERID> ask the bot", true},
+		{"talk to the Bot!", false},
+		{"<@OTHERID> ask the bot", false},
 		// Word-like substrings should NOT match
 		{"robot is here", false},
 		{"bottom line", false},
@@ -449,13 +438,13 @@ func TestAIChat_CalculateDropChance_WithRecentContext(t *testing.T) {
 		Timestamp: time.Now().Add(-30 * time.Second),
 	})
 	// Assign persona so calculateDropChance uses it
-	a.stickyPersonas["U1"] = personaAssignment{Name: "p1", Timestamp: time.Now()}
+	a.stickyPersonas["C1"] = personaAssignment{Name: "p1", Timestamp: time.Now()}
 
 	dropWithContext := a.calculateDropChance("U1", "C1", "this is a normal message today")
 	dropWithout := newTestAIChat(t, cfg).calculateDropChance("U1", "C1", "this is a normal message today")
 
-	if dropWithContext >= dropWithout {
-		t.Errorf("recent bot reply should lower drop chance: with=%f without=%f", dropWithContext, dropWithout)
+	if dropWithContext <= dropWithout {
+		t.Errorf("recent bot reply should increase drop chance: with=%f without=%f", dropWithContext, dropWithout)
 	}
 }
 
@@ -484,7 +473,7 @@ func TestAIChat_BuildMessages_FallsBackToHardcodedPersona(t *testing.T) {
 		t.Fatal("expected at least one message")
 	}
 	systemContent := fmt.Sprintf("%v", msgs[0].Parts)
-	if !strings.Contains(systemContent, "Gen-Z") {
+	if !strings.Contains(systemContent, "encouraging") {
 		t.Errorf("expected glazer persona fallback, got: %s", systemContent)
 	}
 }
@@ -497,8 +486,8 @@ func TestAIChat_BuildMessages_FallsBackToGlazerWhenUnknown(t *testing.T) {
 		t.Fatal("expected at least one message")
 	}
 	systemContent := fmt.Sprintf("%v", msgs[0].Parts)
-	if !strings.Contains(systemContent, "Gen-Z") {
-		t.Errorf("expected glazer default fallback, got: %s", systemContent)
+	if !strings.Contains(systemContent, "grounded") {
+		t.Errorf("expected grounded default fallback, got: %s", systemContent)
 	}
 }
 
@@ -575,7 +564,7 @@ func TestAIChat_BuildMessages_LiveContextInserted(t *testing.T) {
 
 	live := []slackContextMessage{
 		{Text: "thread message one", IsBot: false},
-		{Text: "bot replied here", IsBot: true},
+		{Text: "bot replied here", IsBot: true, IsSelf: true},
 		{Text: "thread message two", IsBot: false},
 	}
 	msgs := a.buildMessages("current message", UserDetails{}, "p", nil, live)
@@ -612,17 +601,13 @@ func TestAIChat_BuildMessages_LiveContextBeforeStoredContext(t *testing.T) {
 	}
 	msgs := a.buildMessages("now", UserDetails{}, "p", stored, live)
 
-	// Expect: system, live human, stored human, current = 4
-	if len(msgs) != 4 {
-		t.Fatalf("expected 4 messages, got %d", len(msgs))
+	// Live context is authoritative; stored memory is a fallback only.
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(msgs))
 	}
 	liveContent := fmt.Sprintf("%v", msgs[1].Parts)
-	storedContent := fmt.Sprintf("%v", msgs[2].Parts)
 	if !strings.Contains(liveContent, "live msg") {
 		t.Errorf("msgs[1] should be live context, got: %s", liveContent)
-	}
-	if !strings.Contains(storedContent, "stored msg") {
-		t.Errorf("msgs[2] should be stored context, got: %s", storedContent)
 	}
 }
 
@@ -633,7 +618,7 @@ func TestAIChat_BuildMessages_AntiRepetitionWithBotLiveHistory(t *testing.T) {
 
 	live := []slackContextMessage{
 		{Text: "user said something", IsBot: false},
-		{Text: "bot replied", IsBot: true},
+		{Text: "bot replied", IsBot: true, IsSelf: true},
 	}
 	msgs := a.buildMessages("another message", UserDetails{}, "p", nil, live)
 	if len(msgs) == 0 {

@@ -215,7 +215,7 @@ func (cm *ConfigManager) mergeConfigs(fileConfig *FileConfig) configOpts {
 	opts.AIChatMaxContextMessages = intWithFileAndOverride(
 		aichatConfig.MaxContextMessages, 10, cm.cliOverrides.MaxContextMessages)
 	opts.AIChatMaxContextAge = durationWithFileAndOverride(
-		aichatConfig.MaxContextAge, 24*time.Hour, cm.cliOverrides.MaxContextAge)
+		aichatConfig.MaxContextAge, 2*time.Hour, cm.cliOverrides.MaxContextAge)
 	opts.AIChatMaxContextTokens = intWithFileAndOverride(
 		aichatConfig.MaxContextTokens, 2000, cm.cliOverrides.MaxContextTokens)
 	opts.AIChatRateLimitEnabled = boolWithFileAndOverride(
