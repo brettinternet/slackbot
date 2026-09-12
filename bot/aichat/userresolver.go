@@ -6,13 +6,17 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"go.uber.org/zap"
 
 	"github.com/slack-go/slack"
+	"golang.org/x/sync/singleflight"
 )
 
 type userNameResolver struct {
+	mutex  sync.Mutex
+	lookup singleflight.Group
 	names  map[string]string // userID -> first name
 	client *slack.Client
 	log    *zap.Logger
@@ -52,26 +56,37 @@ func (r *userNameResolver) loadFromFile(path string) {
 }
 
 func (r *userNameResolver) resolve(ctx context.Context, userID string) string {
-	if name, ok := r.names[userID]; ok {
+	r.mutex.Lock()
+	name, ok := r.names[userID]
+	r.mutex.Unlock()
+	if ok {
 		return name
 	}
-	if r.client == nil {
-		return ""
-	}
-	user, err := r.client.GetUserInfoContext(ctx, userID)
-	if err != nil {
-		r.log.Warn("Failed to resolve user name", zap.String("user", userID), zap.Error(err))
-		r.names[userID] = "" // cache miss to avoid repeated calls
-		return ""
-	}
-	name := firstNameFrom(user.Profile.RealName)
-	if name == "" {
-		name = firstNameFrom(user.Profile.DisplayName)
-	}
-	if name == "" {
-		name = user.Name
-	}
-	r.names[userID] = name
+	resolved, _, _ := r.lookup.Do(userID, func() (any, error) {
+		r.mutex.Lock()
+		name, ok := r.names[userID]
+		r.mutex.Unlock()
+		if ok || r.client == nil {
+			return name, nil
+		}
+		user, err := r.client.GetUserInfoContext(ctx, userID)
+		if err != nil {
+			r.log.Warn("Failed to resolve user name", zap.String("user", userID), zap.Error(err))
+			return "", err
+		}
+		name = firstNameFrom(user.Profile.RealName)
+		if name == "" {
+			name = firstNameFrom(user.Profile.DisplayName)
+		}
+		if name == "" {
+			name = user.Name
+		}
+		r.mutex.Lock()
+		r.names[userID] = name
+		r.mutex.Unlock()
+		return name, nil
+	})
+	name, _ = resolved.(string)
 	return name
 }
 

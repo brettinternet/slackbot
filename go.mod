@@ -11,6 +11,7 @@ require (
 	github.com/urfave/cli-altsrc/v3 v3.1.0
 	github.com/urfave/cli/v3 v3.11.0
 	go.uber.org/zap v1.28.0
+	golang.org/x/sync v0.22.0
 	golang.org/x/time v0.16.0
 	modernc.org/sqlite v1.58.0
 )

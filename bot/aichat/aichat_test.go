@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -32,18 +33,41 @@ func (m *mockAI) GenerateContent(context.Context, []llms.MessageContent, ...llms
 	return &llms.ContentResponse{Choices: []*llms.ContentChoice{{Content: "test response"}}}, nil
 }
 
+type delayedAI struct {
+	delay time.Duration
+}
+
+func (d *delayedAI) GenerateContent(context.Context, []llms.MessageContent, ...llms.CallOption) (*llms.ContentResponse, error) {
+	time.Sleep(d.delay)
+	return &llms.ContentResponse{Choices: []*llms.ContentChoice{{Content: "test response"}}}, nil
+}
+
+type blockingAI struct {
+	started chan struct{}
+	once    sync.Once
+}
+
+func (b *blockingAI) GenerateContent(ctx context.Context, _ []llms.MessageContent, _ ...llms.CallOption) (*llms.ContentResponse, error) {
+	b.once.Do(func() { close(b.started) })
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
 func newTestAIChat(t *testing.T, cfg Config) *AIChat {
 	t.Helper()
 	if cfg.StickyDuration == 0 {
 		cfg.StickyDuration = 30 * time.Minute
 	}
+	slackMock := &mockSlack{botUserID: "UBOTID"}
 	return &AIChat{
 		log:            zap.NewNop(),
 		config:         cfg,
-		slack:          &mockSlack{botUserID: "UBOTID"},
+		slack:          slackMock,
 		ai:             &mockAI{},
+		userNames:      newUserNameResolver(cfg.DataDir, slackMock.Client(), zap.NewNop()),
 		stickyPersonas: make(map[string]personaAssignment),
 		stopCh:         make(chan struct{}),
+		shutdownDone:   make(chan struct{}),
 		eventsCh:       make(chan slackevents.EventsAPIEvent, eventChannelSize),
 	}
 }
@@ -59,6 +83,18 @@ func newTestAIChatWithStorage(t *testing.T, cfg Config) (*AIChat, *ContextStorag
 	a.context = storage
 	t.Cleanup(func() { _ = storage.Close() })
 	return a, storage
+}
+
+func TestAIChatGenerationLatencyMetrics(t *testing.T) {
+	a := newTestAIChat(t, Config{})
+	a.ai = &delayedAI{delay: 5 * time.Millisecond}
+	if _, err := a.generateContent(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	metrics := a.Metrics()
+	if metrics.GenerationCount != 1 || metrics.GenerationLatencyTotal < 5*time.Millisecond {
+		t.Fatalf("metrics = %#v", metrics)
+	}
 }
 
 // --- Context Storage Tests ---

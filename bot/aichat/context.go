@@ -32,6 +32,13 @@ func NewContextStorage(dataDir string) (*ContextStorage, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
+	// A single connection serializes writes from conversation shards. The busy
+	// timeout also tolerates short-lived locks held by another process.
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec(`PRAGMA busy_timeout = 5000`); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("configure database: %w", err)
+	}
 
 	storage := &ContextStorage{db: db}
 	if err := storage.initSchema(); err != nil {
@@ -57,6 +64,11 @@ func (cs *ContextStorage) initSchema() error {
 		message TEXT NOT NULL,
 		role TEXT NOT NULL CHECK (role IN ('human', 'assistant')),
 		timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+	CREATE TABLE IF NOT EXISTS persona_assignment (
+		conversation_scope TEXT PRIMARY KEY,
+		persona_name TEXT NOT NULL,
+		timestamp DATETIME NOT NULL
 	);`
 
 	_, err := cs.db.Exec(query)
@@ -156,6 +168,33 @@ func (cs *ContextStorage) GetRecentContext(userID, channelID string, config *Con
 	}
 
 	return contexts, rows.Err()
+}
+
+// StorePersonaAssignment persists the current persona for a conversation scope.
+func (cs *ContextStorage) StorePersonaAssignment(scope string, assignment personaAssignment) error {
+	_, err := cs.db.Exec(`
+		INSERT INTO persona_assignment (conversation_scope, persona_name, timestamp)
+		VALUES (?, ?, ?)
+		ON CONFLICT(conversation_scope) DO UPDATE SET
+			persona_name = excluded.persona_name,
+			timestamp = excluded.timestamp`, scope, assignment.Name, assignment.Timestamp)
+	return err
+}
+
+// GetPersonaAssignment retrieves a persisted persona for a conversation scope.
+func (cs *ContextStorage) GetPersonaAssignment(scope string) (personaAssignment, bool, error) {
+	var assignment personaAssignment
+	err := cs.db.QueryRow(`
+		SELECT persona_name, timestamp
+		FROM persona_assignment
+		WHERE conversation_scope = ?`, scope).Scan(&assignment.Name, &assignment.Timestamp)
+	if err == sql.ErrNoRows {
+		return personaAssignment{}, false, nil
+	}
+	if err != nil {
+		return personaAssignment{}, false, err
+	}
+	return assignment, true, nil
 }
 
 // CleanOldContext removes conversation context older than the specified duration

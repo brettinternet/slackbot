@@ -1,10 +1,10 @@
-// TODO: add persistence https://github.com/tmc/langchaingo/blob/main/examples/chains-conversation-memory-sqlite/chains_conversation_memory_sqlite.go
 package aichat
 
 import (
 	"context"
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -101,6 +101,7 @@ type AIChat struct {
 	slack           slackService
 	ai              aiService
 	context         *ContextStorage
+	userNames       *userNameResolver
 	stopCh          chan struct{}
 	eventsCh        chan slackevents.EventsAPIEvent
 	isConnected     atomic.Bool
@@ -109,7 +110,31 @@ type AIChat struct {
 	limiterMutex    sync.Mutex
 	channelLimiters map[string]*rate.Limiter
 	stopOnce        sync.Once
+	closeOnce       sync.Once
 	workers         sync.WaitGroup
+	shutdownDone    chan struct{}
+	queueDepth      atomic.Int64
+	queueDrops      atomic.Uint64
+	generationCount atomic.Uint64
+	generationNanos atomic.Int64
+}
+
+// Metrics is a point-in-time snapshot of AI chat queue and generation activity.
+type Metrics struct {
+	QueueDepth             int64
+	QueueDrops             uint64
+	GenerationCount        uint64
+	GenerationLatencyTotal time.Duration
+}
+
+// Metrics returns a point-in-time snapshot suitable for an application's metrics exporter.
+func (a *AIChat) Metrics() Metrics {
+	return Metrics{
+		QueueDepth:             a.queueDepth.Load(),
+		QueueDrops:             a.queueDrops.Load(),
+		GenerationCount:        a.generationCount.Load(),
+		GenerationLatencyTotal: time.Duration(a.generationNanos.Load()),
+	}
 }
 
 func NewAIChat(log *zap.Logger, c Config, s slackService, a aiService) *AIChat {
@@ -126,9 +151,11 @@ func NewAIChat(log *zap.Logger, c Config, s slackService, a aiService) *AIChat {
 		slack:           s,
 		ai:              a,
 		context:         contextStorage,
+		userNames:       newUserNameResolver(c.DataDir, s.Client(), log),
 		stickyPersonas:  make(map[string]personaAssignment),
 		channelLimiters: make(map[string]*rate.Limiter),
 		stopCh:          make(chan struct{}),
+		shutdownDone:    make(chan struct{}),
 		eventsCh:        make(chan slackevents.EventsAPIEvent, eventChannelSize),
 	}
 }
@@ -152,15 +179,24 @@ func (a *AIChat) Stop(ctx context.Context) error {
 	a.stopOnce.Do(func() {
 		a.isConnected.Store(false)
 		close(a.stopCh)
-		a.workers.Wait()
-
-		if a.context != nil {
-			if err := a.context.Close(); err != nil {
-				a.log.Error("Failed to close context storage", zap.Error(err))
-			}
-		}
+		go func() {
+			a.workers.Wait()
+			a.closeOnce.Do(func() {
+				if a.context != nil {
+					if err := a.context.Close(); err != nil {
+						a.log.Error("Failed to close context storage", zap.Error(err))
+					}
+				}
+			})
+			close(a.shutdownDone)
+		}()
 	})
-	return nil
+	select {
+	case <-a.shutdownDone:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // PushEvent adds an event to be processed by the AIChat feature
@@ -169,11 +205,15 @@ func (a *AIChat) PushEvent(event slackevents.EventsAPIEvent) {
 		return
 	}
 
+	a.queueDepth.Add(1)
 	select {
 	case a.eventsCh <- event:
-		// Event pushed successfully
 	default:
-		a.log.Warn("AIChat events channel full, dropping event.")
+		a.queueDepth.Add(-1)
+		a.queueDrops.Add(1)
+		a.log.Warn("AIChat events channel full, dropping event.",
+			zap.Int64("queue_depth", a.queueDepth.Load()),
+			zap.Uint64("queue_drops", a.queueDrops.Load()))
 	}
 }
 
@@ -191,27 +231,84 @@ func (a *AIChat) allowChannelEvent(channelID string) bool {
 	return limiter.Allow()
 }
 
-// handleEvents processes Slack events with a small bounded worker pool. Events remain
-// queued while an individual model request is in flight.
+// handleEvents shards events by conversation. Each shard is serial, preserving
+// order within a channel or thread while retaining concurrency across conversations.
 func (a *AIChat) handleEvents(ctx context.Context) {
+	workerCtx, cancelWorkers := context.WithCancel(ctx)
+	shards := make([]chan slackevents.EventsAPIEvent, workerCount)
 	var workers sync.WaitGroup
 	workers.Add(workerCount)
-	for i := 0; i < workerCount; i++ {
-		go func() {
+	for i := range shards {
+		shards[i] = make(chan slackevents.EventsAPIEvent, eventChannelSize)
+		go func(events <-chan slackevents.EventsAPIEvent) {
 			defer workers.Done()
 			for {
 				select {
-				case <-a.stopCh:
+				case <-workerCtx.Done():
+					for range events {
+						a.queueDepth.Add(-1)
+					}
 					return
-				case <-ctx.Done():
-					return
-				case event := <-a.eventsCh:
-					a.processEventSafely(ctx, event)
+				case event, ok := <-events:
+					if !ok {
+						return
+					}
+					a.queueDepth.Add(-1)
+					a.processEventSafely(workerCtx, event)
 				}
 			}
-		}()
+		}(shards[i])
 	}
-	workers.Wait()
+	defer func() {
+		cancelWorkers()
+		for _, shard := range shards {
+			close(shard)
+		}
+		for {
+			select {
+			case <-a.eventsCh:
+				a.queueDepth.Add(-1)
+			default:
+				workers.Wait()
+				return
+			}
+		}
+	}()
+
+	for {
+		select {
+		case <-a.stopCh:
+			return
+		case <-ctx.Done():
+			return
+		case event := <-a.eventsCh:
+			shard := conversationShard(event, len(shards))
+			select {
+			case shards[shard] <- event:
+			case <-a.stopCh:
+				a.queueDepth.Add(-1)
+				return
+			case <-ctx.Done():
+				a.queueDepth.Add(-1)
+				return
+			}
+		}
+	}
+}
+
+func conversationShard(event slackevents.EventsAPIEvent, count int) int {
+	key := ""
+	switch ev := event.InnerEvent.Data.(type) {
+	case *slackevents.AppMentionEvent:
+		key = conversationScope(ev.Channel, ev.ThreadTimeStamp)
+	case *slackevents.MessageEvent:
+		key = conversationScope(ev.Channel, ev.ThreadTimeStamp)
+	}
+	shard := 0
+	for _, character := range []byte(key) {
+		shard = (shard*31 + int(character)) % count
+	}
+	return shard
 }
 
 // Literal addressing is intentionally narrower than a word search: an explicit
@@ -320,18 +417,30 @@ func (a *AIChat) fetchThreadContext(ctx context.Context, channelID, threadTS, tr
 	if client == nil {
 		return nil
 	}
-	msgs, _, _, err := client.GetConversationRepliesContext(ctx, &slack.GetConversationRepliesParameters{
+	params := &slack.GetConversationRepliesParameters{
 		ChannelID: channelID,
 		Timestamp: threadTS,
-		Limit:     25,
-	})
-	if err != nil {
-		a.log.Warn("Failed to fetch thread context", zap.String("channel", channelID), zap.Error(err))
-		return nil
+		Limit:     100,
+	}
+	var msgs []slack.Message
+	for {
+		page, hasMore, nextCursor, err := client.GetConversationRepliesContext(ctx, params)
+		if err != nil {
+			a.log.Warn("Failed to fetch thread context", zap.String("channel", channelID), zap.Error(err))
+			return nil
+		}
+		msgs = append(msgs, page...)
+		if !hasMore || nextCursor == "" {
+			break
+		}
+		params.Cursor = nextCursor
 	}
 	if len(msgs) == 0 {
 		return nil
 	}
+	sort.SliceStable(msgs, func(i, j int) bool {
+		return parseSlackTimestamp(msgs[i].Timestamp).Before(parseSlackTimestamp(msgs[j].Timestamp))
+	})
 	botID := a.slack.BotUserID()
 	result := make([]slackContextMessage, 0, len(msgs))
 	for _, msg := range msgs {
@@ -416,7 +525,7 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 	)
 
 	if !m.DirectMention && isShortAcknowledgement(eventMessage) {
-		a.reactToAcknowledgement(ctx, m, "+1")
+		a.reactToAcknowledgement(ctx, m, acknowledgementReaction())
 		return
 	}
 
@@ -436,14 +545,12 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 		userDetails = UserDetails{UserID: m.UserID, Username: m.Username}
 	}
 
-	conversationScope := m.Channel
-	if m.ThreadTimeStamp != "" {
-		conversationScope = m.ThreadTimeStamp
-	}
-	personaName := a.userPersona(conversationScope)
+	scope := conversationScope(m.Channel, m.ThreadTimeStamp)
+	personaName := a.userPersona(scope)
 
 	// Prefer live Slack context because it has the actual channel chronology. Stored
-	// memory is a fallback for API failures or channels with no recent messages.
+	// channel memory is a fallback for API failures or channels with no recent messages.
+	// Threads never fall back to channel memory because it may describe an unrelated conversation.
 	var recentContext []ConversationContext
 	var liveContext []slackContextMessage
 	if m.ThreadTimeStamp != "" {
@@ -451,8 +558,8 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 	} else {
 		liveContext = a.fetchChannelContext(ctx, m.Channel, m.TimeStamp)
 	}
-	if len(liveContext) == 0 && a.context != nil {
-		recentContext, err = a.context.GetRecentContext(m.UserID, m.Channel, &a.config)
+	if shouldLoadStoredContext(len(liveContext)) && a.context != nil {
+		recentContext, err = a.context.GetRecentContext(m.UserID, scope, &a.config)
 		if err != nil {
 			a.log.Warn("Failed to retrieve conversation context",
 				zap.String("user", m.UserID), zap.String("channel", m.Channel), zap.Error(err))
@@ -460,17 +567,19 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 	}
 
 	if len(liveContext) > 0 {
-		resolver := newUserNameResolver(a.config.DataDir, a.slack.Client(), a.log)
+		if a.userNames == nil {
+			a.userNames = newUserNameResolver(a.config.DataDir, a.slack.Client(), a.log)
+		}
 		for i := range liveContext {
 			if !liveContext[i].IsBot && liveContext[i].SenderID != "" {
-				liveContext[i].SenderName = resolver.resolve(ctx, liveContext[i].SenderID)
+				liveContext[i].SenderName = a.userNames.resolve(ctx, liveContext[i].SenderID)
 			}
 		}
 	}
 
 	messages := a.buildMessages(m.Text, userDetails, personaName, recentContext, liveContext)
 	profile := generationProfileForInput(eventMessage)
-	resp, err := a.ai.GenerateContent(ctx, messages,
+	resp, err := a.generateContent(ctx, messages,
 		generationOptions(profile.Temperature, profile.MaxTokens)...)
 	if err != nil {
 		a.log.Error("Failed to generate content",
@@ -534,7 +643,7 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 		// Store user message
 		userContext := ConversationContext{
 			UserID:      m.UserID,
-			ChannelID:   m.Channel,
+			ChannelID:   scope,
 			PersonaName: personaName,
 			Message:     m.Text,
 			Role:        "human",
@@ -551,7 +660,7 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 		// Store assistant response
 		assistantContext := ConversationContext{
 			UserID:      m.UserID,
-			ChannelID:   m.Channel,
+			ChannelID:   scope,
 			PersonaName: personaName,
 			Message:     completion,
 			Role:        "assistant",
@@ -567,23 +676,51 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 	}
 }
 
+func shouldLoadStoredContext(liveContextMessages int) bool {
+	return liveContextMessages == 0
+}
+
+func conversationScope(channelID, threadTS string) string {
+	if threadTS == "" {
+		return channelID
+	}
+	return channelID + ":thread:" + threadTS
+}
+
 // userPersona assigns one persona to a channel or thread and keeps it stable while
-// that conversation remains active.
+// that conversation remains active, including across process restarts.
 func (a *AIChat) userPersona(scope string) string {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
 	now := time.Now()
-	if assignment, ok := a.stickyPersonas[scope]; ok {
-		if a.config.StickyDuration <= 0 || now.Sub(assignment.Timestamp) < a.config.StickyDuration {
-			assignment.Timestamp = now
-			a.stickyPersonas[scope] = assignment
-			return assignment.Name
+	assignment, ok := a.stickyPersonas[scope]
+	if !ok && a.context != nil {
+		var err error
+		assignment, ok, err = a.context.GetPersonaAssignment(scope)
+		if err != nil {
+			a.log.Warn("Failed to retrieve persona assignment", zap.String("scope", scope), zap.Error(err))
 		}
-		delete(a.stickyPersonas, scope)
+	}
+	if ok && (a.config.StickyDuration <= 0 || now.Sub(assignment.Timestamp) < a.config.StickyDuration) {
+		assignment.Timestamp = now
+		a.stickyPersonas[scope] = assignment
+		a.storePersonaAssignment(scope, assignment)
+		return assignment.Name
 	}
 	personaName := a.randomPersonaName()
-	a.stickyPersonas[scope] = personaAssignment{Name: personaName, Timestamp: now}
+	assignment = personaAssignment{Name: personaName, Timestamp: now}
+	a.stickyPersonas[scope] = assignment
+	a.storePersonaAssignment(scope, assignment)
 	return personaName
+}
+
+func (a *AIChat) storePersonaAssignment(scope string, assignment personaAssignment) {
+	if a.context == nil {
+		return
+	}
+	if err := a.context.StorePersonaAssignment(scope, assignment); err != nil {
+		a.log.Warn("Failed to persist persona assignment", zap.String("scope", scope), zap.Error(err))
+	}
 }
 
 // randomPersonaName returns a random persona name from the configured personas
@@ -790,6 +927,14 @@ Be relevant and grounded. Match the conversation's tone. Answer sincere, technic
 	return messages
 }
 
+func (a *AIChat) generateContent(ctx context.Context, messages []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error) {
+	started := time.Now()
+	response, err := a.ai.GenerateContent(ctx, messages, options...)
+	a.generationCount.Add(1)
+	a.generationNanos.Add(time.Since(started).Nanoseconds())
+	return response, err
+}
+
 type generationProfile struct {
 	Temperature float64
 	MaxTokens   int
@@ -832,6 +977,10 @@ func isShortAcknowledgement(text string) bool {
 	default:
 		return false
 	}
+}
+
+func acknowledgementReaction() string {
+	return random.String([]string{"+1", "heart", "raised_hands", "tada"})
 }
 
 func (a *AIChat) reactToAcknowledgement(ctx context.Context, m eventMessage, reaction string) {
