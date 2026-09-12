@@ -66,7 +66,7 @@ func Flags() []cli.Flag {
 		&cli.StringFlag{
 			Name:    "config-file",
 			Aliases: []string{"config", "c"},
-			Usage:   "Path to yaml or json file of chat responses definition.",
+			Usage:   "Path to YAML or JSON feature configuration.",
 			Value:   "./config.yaml",
 			Sources: cli.EnvVars("CONFIG_FILE"),
 			Validator: func(v string) error {
@@ -116,7 +116,7 @@ func Flags() []cli.Flag {
 		},
 		&cli.StringFlag{
 			Name:     "slack-token",
-			Usage:    "Slack Client Secret for OAuth authentication.",
+			Usage:    "Slack bot token for API authentication.",
 			Required: true,
 			Sources: cli.NewValueSourceChain(
 				cli.EnvVar("SLACK_TOKEN"),
@@ -133,7 +133,7 @@ func Flags() []cli.Flag {
 		},
 		&cli.StringFlag{
 			Name:  "openai-api-key",
-			Usage: "OpenAPI API key for AI conversations.",
+			Usage: "OpenAI API key for AI features.",
 			Sources: cli.NewValueSourceChain(
 				cli.EnvVar("OPENAI_API_KEY"),
 				cli.File("/run/secrets/openai_api_key"),

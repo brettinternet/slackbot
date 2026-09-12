@@ -8,7 +8,6 @@ import (
 	"slackbot.arpa/bot/config"
 )
 
-
 type cmdWithArgs func(ctx context.Context, cmd *cli.Command, s *Bot) error
 
 // Wrap subcommands to inject the bot dependency
@@ -35,7 +34,7 @@ func NewCommandRoot(s *Bot) (*bool, *cli.Command) {
 	start := new(bool)
 	return start, &cli.Command{
 		Name:    "slackbot",
-		Usage:   "Multifunctional operating slack bot system for blah blah",
+		Usage:   "Workplace utilities for Slack",
 		Version: version,
 		Before:  setup(s.Setup), // runs before any command to initialize the server
 		Action: func(ctx context.Context, cmd *cli.Command) error {

@@ -34,9 +34,8 @@ tasks:
     cmd: lsof -t -i tcp:${SERVER_PORT} | xargs kill
 
   run:
-    desc: Runs server commands with arguments
-    dir: "{{.MAIN_DIR}}"
-    cmd: go run ./main.go {{.COMMAND | default .CLI_ARGS}}
+    desc: Run bot commands with arguments
+    cmd: go run ./{{.MAIN_DIR}} {{.COMMAND | default .CLI_ARGS}}
 
   check:
     desc: Run checks

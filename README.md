@@ -3,44 +3,112 @@
 [![CI](https://github.com/brettinternet/slackbot/actions/workflows/ci.yml/badge.svg)](https://github.com/brettinternet/slackbot/actions/workflows/ci.yml)
 [![Build](https://github.com/brettinternet/slackbot/actions/workflows/publish-bot.yaml/badge.svg)](https://github.com/brettinternet/slackbot/actions/workflows/publish-bot.yaml)
 
-Utilities for the workplace.
+Workplace utilities for Slack.
 
-![slack bot notifications when user is removed or added](./demo.png)
+![Slack user-change notifications](./demo.png)
 
 ## Features
 
-See example [config.yaml](config.yaml) or environment variables in [flag.go](./bot/config/flag.go) for feature configuration. Updates to this file will update the runtime configuration while it's running.
-
-- Obituaries & user watch to get notified when users are removed or added from the Slack org (scopes: `channels:history`, `groups:history` and `chat:write`)
-- Chat responses and reactions, requires `SLACK_SIGNING_SECRET`, configured responses, and a public event endpoint
-- Vibecheck - failing a vibecheck will result in a temporary ban from the channel
-- AI Chat with configurable prompts for sticky (assigned to users at random for 1 hour) personas, requires `SLACK_SIGNING_SECRET`, `OPENAI_API_KEY` and configuring a public event endpoint
-- Deployable with a [container](https://github.com/brettinternet/slackbot/pkgs/container/slackbot)
+- Notify a channel when workspace users are added or removed.
+- Reply or react to configured message patterns.
+- Run vibechecks and temporarily remove users who fail.
+- Answer messages with OpenAI-backed, rotating personas and recent conversation context.
+- Post an AI-generated shower thought during configured weekday hours.
+- Send messages, invite users, or delete bot messages from the CLI.
+- Expose health checks at `/health`, `/healthz`, and `/ready`.
 
 ## Setup
 
-Create a Slack app: From "OAuth & Permissions" in the app's menu, you can "Install to workspace" and then get a "Bot User OAuth Token" which is the Slack token used in this service. Add necessary scopes per feature.
+Requirements: Go 1.26 and [Task](https://taskfile.dev/). [mise](https://mise.jdx.dev/) can install the local toolchain.
 
-Manage the app via the CLI, run with `--help` to see options and valid environment variables. Requires `SLACK_TOKEN` or `SLACK_TOKEN_FILE`.
+```sh
+task init # creates .env from example.env when absent
+```
 
-## Run
+Edit `.env` and `config.yaml`, then start the bot:
 
-Here's how a minimal docker-compose service might look for the bot deployment. See also [docker-compose](./docker-compose.yaml).
+```sh
+task start
+```
+
+The bot requires `SLACK_TOKEN` and a user notification channel. Set either
+`SLACK_USER_NOTIFY_CHANNEL` or `user.notify_channel` in `config.yaml`.
+
+For message, vibecheck, and AI chat events:
+
+1. Set `SLACK_SIGNING_SECRET`.
+2. Expose `POST /api/slack/events` publicly.
+3. Set that URL under **Event Subscriptions** in the Slack app.
+4. Subscribe to `app_mention` and the message events needed for your channels.
+
+Add bot token scopes for the features you enable. Typical scopes include `users:read`, `chat:write`,
+`reactions:write`, `app_mentions:read`, and channel history. Vibecheck and invite commands also need
+permission to manage channel membership.
+
+## Configuration
+
+`config.yaml` contains complete examples for chat responses, vibecheck, AI personas, context limits,
+and shower thoughts. Environment variables and CLI flags provide credentials and runtime settings:
+
+```sh
+task bot:run -- --help
+```
+
+Useful settings:
+
+| Setting                   | Default             | Purpose                            |
+| ------------------------- | ------------------- | ---------------------------------- |
+| `CONFIG_FILE`             | `./config.yaml`     | YAML or JSON feature configuration |
+| `DATA_DIR`                | `./`                | SQLite and user-state storage      |
+| `SERVER_PORT`             | `4200`              | HTTP port                          |
+| `SLACK_EVENTS_PATH`       | `/api/slack/events` | Slack Events API path              |
+| `OPENAI_MODEL`            | application default | AI model                           |
+| `OPENAI_REASONING_EFFORT` | application default | Model reasoning effort             |
+
+Chat response changes in `config.yaml` reload while the bot runs. Restart after changing other feature
+settings.
+
+## Container
 
 ```yaml
 services:
   slackbot:
     image: ghcr.io/brettinternet/slackbot:main
+    ports:
+      - "4200:4200"
     environment:
-      LOG_LEVEL: debug
-      SERVER_PORT: 4200
+      CONFIG_FILE: /app/config.yaml
       DATA_DIR: /app/data
-      CONFIG_FILE: /app/data/config.yaml
       SLACK_TOKEN: "${SLACK_TOKEN}"
-      SLACK_USER_NOTIFY_CHANNEL: mybotchannel
       SLACK_SIGNING_SECRET: "${SLACK_SIGNING_SECRET}"
-      SLACK_PREFERRED_USERS: ADMINUSERID
+      SLACK_USER_NOTIFY_CHANNEL: team-updates
       OPENAI_API_KEY: "${OPENAI_API_KEY}"
     volumes:
-      - "${CONFIG_DIR}/slackbot:/app/data"
+      - ./config.yaml:/app/config.yaml:ro
+      - ./data:/app/data
+```
+
+Docker secrets are also read from `/run/secrets/slack_token`,
+`/run/secrets/slack_signing_secret`, and `/run/secrets/openai_api_key`.
+
+## CLI examples
+
+```sh
+# Send to one channel
+task bot:run -- send-message --message "Hello" --channels C01234567
+
+# Invite users to channels
+task bot:run -- invite-channel --users U01234567 --channels C01234567
+
+# Delete messages posted by bots in a channel
+task bot:run -- delete-messages-from-channel --channel C01234567
+```
+
+## Development
+
+```sh
+task test   # tests
+task check  # lint and security checks
+task fix    # formatting and automatic fixes
+task build  # build ./bin/bot
 ```
