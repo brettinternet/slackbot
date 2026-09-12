@@ -1,0 +1,7 @@
+.env
+.git
+.worktrees
+bin
+coverage.out
+tmp
+docker/bot/data
