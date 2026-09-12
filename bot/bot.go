@@ -99,7 +99,9 @@ func (s *Bot) Setup(ctx context.Context, cmd *cli.Command) (context.Context, err
 	s.userWatch = user.NewUserWatch(s.log, s.configManager.GetUserConfig(), s.slack)
 
 	// Initialize services conditionally based on their configuration
-	s.initializeServices(ctx, currentConfig)
+	if err := s.initializeServices(ctx, currentConfig); err != nil {
+		return ctx, err
+	}
 
 	s.http = http.NewServer(s.log, s.configManager.GetHTTPConfig(), s.slack)
 
@@ -110,28 +112,17 @@ func (s *Bot) Setup(ctx context.Context, cmd *cli.Command) (context.Context, err
 }
 
 // initializeServices conditionally initializes services based on configuration
-func (s *Bot) initializeServices(ctx context.Context, currentConfig *config.Config) {
-	// Only initialize chat service if there are chat responses configured
-	fileConfig := s.configManager.GetConfig()
-	var chatResponses int
-	if fileConfig != nil {
-		// Load current file config to check responses
-		var fc config.FileConfig
-		if currentConfig.ConfigFile != "" {
-			if err := config.ReadConfig(currentConfig.ConfigFile, &fc); err == nil {
-				chatResponses = len(fc.Chat.Responses)
-			}
-		}
+func (s *Bot) initializeServices(ctx context.Context, currentConfig *config.Config) error {
+	chatConfig := s.configManager.GetChatConfig()
+	chatService, err := chat.NewChat(s.log, chatConfig, s.slack)
+	if err != nil {
+		return fmt.Errorf("initialize chat: %w", err)
 	}
-
-	if chatResponses > 0 {
-		s.chat = chat.NewChat(s.log, s.configManager.GetChatConfig(), s.slack)
-		s.log.Info("Chat service initialized", zap.Int("responses", chatResponses))
-	} else {
-		s.log.Info("Chat service disabled - no responses configured")
-	}
+	s.chat = chatService
+	s.log.Info("Chat service initialized", zap.Int("responses", len(chatConfig.Responses)))
 
 	// Only initialize vibecheck service if there are reactions configured
+	fileConfig := s.configManager.GetConfig()
 	var hasReactions bool
 	if fileConfig != nil {
 		var fc config.FileConfig
@@ -179,6 +170,8 @@ func (s *Bot) initializeServices(ctx context.Context, currentConfig *config.Conf
 	} else {
 		s.log.Info("AI services disabled - no OpenAI API key provided")
 	}
+
+	return nil
 }
 
 // onConfigChange handles configuration changes and reconfigures services
@@ -201,8 +194,11 @@ func (s *Bot) onConfigChange(newConfig *config.Config) {
 		}
 	}
 
-	// Note: Services will use the updated config from ConfigManager automatically
-	// Some services may need to be reinitialized for certain config changes
+	if s.chat != nil {
+		if err := s.chat.SetConfig(newConfig.Chat); err != nil {
+			s.log.Error("Failed to update chat configuration", zap.Error(err))
+		}
+	}
 
 	// Note: AI services may need restart for some changes (like API keys)
 	// For now, we'll just log the change

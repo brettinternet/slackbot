@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -318,10 +317,6 @@ func TestNewConfig(t *testing.T) {
 
 	if config.Slack.Token != "test-token" {
 		t.Errorf("newConfig() Slack.Token = %v, want %v", config.Slack.Token, "test-token")
-	}
-
-	if !reflect.DeepEqual(config.Chat.PreferredUsers, []string{"user1", "user2"}) {
-		t.Errorf("newConfig() Chat.PreferredUsers = %v, want %v", config.Chat.PreferredUsers, []string{"user1", "user2"})
 	}
 
 	// Test vibecheck ban duration configuration

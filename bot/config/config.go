@@ -200,8 +200,7 @@ func newConfig(opts configOpts) (Config, error) {
 			DataDir:       dataDir,
 		},
 		Chat: chat.Config{
-			PreferredUsers: opts.PreferredUsers,
-			Responses:      opts.ChatResponses,
+			Responses: opts.ChatResponses,
 		},
 		Vibecheck: vibecheck.Config{
 			PreferredUsers: opts.PreferredUsers,

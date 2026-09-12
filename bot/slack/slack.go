@@ -84,6 +84,28 @@ func (s *Slack) Client() *slack.Client {
 	return s.client
 }
 
+// AddReaction adds a reaction to a Slack message.
+func (s *Slack) AddReaction(ctx context.Context, reaction, channel, timestamp string) error {
+	return s.client.AddReactionContext(
+		ctx,
+		reaction,
+		slack.NewRefToMessage(channel, timestamp),
+	)
+}
+
+// PostMessage posts a message, preserving the source thread when present.
+func (s *Slack) PostMessage(ctx context.Context, channel, message, threadTimestamp string) error {
+	options := []slack.MsgOption{
+		slack.MsgOptionAsUser(true),
+		slack.MsgOptionText(message, false),
+	}
+	if threadTimestamp != "" {
+		options = append(options, slack.MsgOptionTS(threadTimestamp))
+	}
+	_, _, err := s.client.PostMessageContext(ctx, channel, options...)
+	return err
+}
+
 // VerifyRequest validates the request body against the Slack signing secret
 func (s *Slack) VerifyRequest(header http.Header, body []byte) error {
 	sv, err := slack.NewSecretsVerifier(header, s.config.SigningSecret)

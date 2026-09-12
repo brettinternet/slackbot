@@ -2,235 +2,303 @@ package chat
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
-	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
 )
 
-// mockSlackService for testing
+type reactionCall struct {
+	reaction  string
+	channel   string
+	timestamp string
+}
+
+type postCall struct {
+	channel         string
+	message         string
+	threadTimestamp string
+}
+
 type mockSlackService struct {
-	client *slack.Client
+	mu          sync.Mutex
+	reactions   []reactionCall
+	posts       []postCall
+	reactionErr error
+	postErr     error
+	postCh      chan postCall
 }
 
-func (m *mockSlackService) Client() *slack.Client {
-	if m.client == nil {
-		m.client = slack.New("test-token")
-	}
-	return m.client
+func (m *mockSlackService) AddReaction(
+	_ context.Context, reaction, channel, timestamp string,
+) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.reactions = append(m.reactions, reactionCall{reaction, channel, timestamp})
+	return m.reactionErr
 }
 
-func TestNewChat(t *testing.T) {
-	logger := zaptest.NewLogger(t)
-	config := Config{
-		PreferredUsers: []string{"user1", "user2"},
+func (m *mockSlackService) PostMessage(
+	_ context.Context, channel, message, threadTimestamp string,
+) error {
+	call := postCall{channel, message, threadTimestamp}
+	m.mu.Lock()
+	m.posts = append(m.posts, call)
+	m.mu.Unlock()
+	if m.postCh != nil {
+		select {
+		case m.postCh <- call:
+		default:
+		}
 	}
-	mockSlack := &mockSlackService{}
-
-	chat := NewChat(logger, config, mockSlack)
-
-	if chat == nil {
-		t.Fatal("NewChat() returned nil")
-	}
-
-	if len(chat.config.PreferredUsers) != 2 {
-		t.Errorf("NewChat() PreferredUsers length = %v, want 2", len(chat.config.PreferredUsers))
-	}
-
-	if chat.isConnected.Load() {
-		t.Error("NewChat() should not be connected initially")
-	}
-
-	if chat.eventsCh == nil {
-		t.Error("NewChat() should initialize eventsCh")
-	}
+	return m.postErr
 }
 
-func TestChat_Start(t *testing.T) {
-	logger := zaptest.NewLogger(t)
-	config := Config{
-		PreferredUsers: []string{"user1"},
-	}
-	mockSlack := &mockSlackService{}
-	chat := NewChat(logger, config, mockSlack)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-
-	err := chat.Start(ctx)
-	if err != nil {
-		t.Errorf("Start() error = %v, want nil", err)
-	}
-
-	if !chat.isConnected.Load() {
-		t.Error("Start() should set isConnected to true")
-	}
-
-	// Stop to clean up
-	_ = chat.Stop(ctx)
+func (m *mockSlackService) calls() ([]reactionCall, []postCall) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]reactionCall(nil), m.reactions...), append([]postCall(nil), m.posts...)
 }
 
-func TestChat_Stop(t *testing.T) {
-	logger := zaptest.NewLogger(t)
-	config := Config{}
-	mockSlack := &mockSlackService{}
-	chat := NewChat(logger, config, mockSlack)
-
-	ctx := context.Background()
-
-	// Start first
-	err := chat.Start(ctx)
-	if err != nil {
-		t.Errorf("Start() error = %v", err)
-	}
-
-	// Now stop
-	err = chat.Stop(ctx)
-	if err != nil {
-		t.Errorf("Stop() error = %v, want nil", err)
-	}
-
-	if chat.isConnected.Load() {
-		t.Error("Stop() should set isConnected to false")
-	}
+func newTestChat(t *testing.T, cfg Config, service *mockSlackService) *Chat {
+	t.Helper()
+	chat, err := NewChat(zaptest.NewLogger(t), cfg, service)
+	require.NoError(t, err)
+	return chat
 }
 
-func TestChat_SetConfig(t *testing.T) {
-	logger := zaptest.NewLogger(t)
-	config := Config{
-		PreferredUsers: []string{"user1"},
-	}
-	mockSlack := &mockSlackService{}
-	chat := NewChat(logger, config, mockSlack)
-
-	newConfig := Config{
-		PreferredUsers: []string{"user1"},
-		Responses: []Response{
-			{
-				Pattern:  "hello",
-				Message:  "Hi there!",
-				IsRegexp: false,
+func messageEvent(user, text, timestamp string) slackevents.EventsAPIEvent {
+	return slackevents.EventsAPIEvent{
+		Type: slackevents.CallbackEvent,
+		InnerEvent: slackevents.EventsAPIInnerEvent{
+			Type: string(slackevents.Message),
+			Data: &slackevents.MessageEvent{
+				User:      user,
+				Channel:   "channel1",
+				Text:      text,
+				TimeStamp: timestamp,
 			},
 		},
 	}
-
-	err := chat.SetConfig(newConfig)
-	if err != nil {
-		t.Errorf("SetConfig() error = %v, want nil", err)
-	}
-
-	if len(chat.config.Responses) != 1 {
-		t.Errorf("SetConfig() responses length = %v, want 1", len(chat.config.Responses))
-	}
-
-	if chat.config.Responses[0].Pattern != "hello" {
-		t.Errorf("SetConfig() response pattern = %v, want 'hello'", chat.config.Responses[0].Pattern)
-	}
 }
 
-func TestChat_ProcessSlackEvent_AppMention(t *testing.T) {
-	logger := zaptest.NewLogger(t)
-	config := Config{}
-	mockSlack := &mockSlackService{}
-	chat := NewChat(logger, config, mockSlack)
+func TestNewChatRejectsInvalidRegexp(t *testing.T) {
+	_, err := NewChat(zaptest.NewLogger(t), Config{Responses: []Response{{
+		Pattern:  "[",
+		IsRegexp: true,
+	}}}, &mockSlackService{})
+	require.ErrorContains(t, err, `compile chat pattern "["`)
+}
 
-	// Set up a simple response
-	chat.config.Responses = []Response{
+func TestChatMatchesAndPerformsConfiguredActions(t *testing.T) {
+	service := &mockSlackService{}
+	chat := newTestChat(t, Config{Responses: []Response{
 		{
-			Pattern:  "hello",
-			Message:  "Hi there!",
-			IsRegexp: false,
+			Pattern:   "hello|hi",
+			Message:   "first reply",
+			Reactions: []string{"wave"},
+			IsRegexp:  true,
 		},
-	}
+		{
+			Pattern:   "HI",
+			Message:   "second reply",
+			Reactions: []string{"+1"},
+		},
+	}}, service)
 
-	ctx := context.Background()
-	_ = chat.Start(ctx)
-	defer func() { _ = chat.Stop(ctx) }()
+	event := messageEvent("user1", "hi", "123.456")
+	event.InnerEvent.Data.(*slackevents.MessageEvent).ThreadTimeStamp = "100.000"
+	chat.processEvent(context.Background(), event)
 
-	// Create an app mention event
-	event := &slackevents.AppMentionEvent{
-		Type:    "app_mention",
-		User:    "user1",
-		Text:    "<@bot> hello",
-		Channel: "channel1",
-		TimeStamp: "1234567890.123",
-	}
+	reactions, posts := service.calls()
+	assert.Equal(t, []reactionCall{
+		{"wave", "channel1", "123.456"},
+		{"+1", "channel1", "123.456"},
+	}, reactions)
+	assert.Equal(t, []postCall{{"channel1", "first reply", "100.000"}}, posts)
+}
 
-	// Use PushEvent instead of ProcessSlackEvent
-	chat.PushEvent(slackevents.EventsAPIEvent{
+func TestChatHandlesAppMention(t *testing.T) {
+	service := &mockSlackService{}
+	chat := newTestChat(t, Config{Responses: []Response{{Pattern: "hello", Message: "hi"}}}, service)
+
+	chat.processEvent(context.Background(), slackevents.EventsAPIEvent{
 		Type: slackevents.CallbackEvent,
 		InnerEvent: slackevents.EventsAPIInnerEvent{
 			Type: string(slackevents.AppMention),
-			Data: event,
+			Data: &slackevents.AppMentionEvent{
+				User:            "user1",
+				Channel:         "channel1",
+				Text:            "<@BOT123> hello",
+				TimeStamp:       "123.456",
+				ThreadTimeStamp: "100.000",
+			},
 		},
 	})
 
-	// Give some time for async processing
-	time.Sleep(10 * time.Millisecond)
+	_, posts := service.calls()
+	assert.Equal(t, []postCall{{"channel1", "hi", "100.000"}}, posts)
 }
 
-func TestChat_PushEvent(t *testing.T) {
-	logger := zaptest.NewLogger(t)
-	config := Config{}
-	mockSlack := &mockSlackService{}
-	chat := NewChat(logger, config, mockSlack)
+func TestChatStaticAndRandomMessages(t *testing.T) {
+	service := &mockSlackService{}
+	chat := newTestChat(t, Config{Responses: []Response{{
+		Pattern:        "hello",
+		Message:        "fixed",
+		RandomMessages: []string{"one", "two"},
+	}}}, service)
 
-	ctx := context.Background()
-	_ = chat.Start(ctx)
-	defer func() { _ = chat.Stop(ctx) }()
+	chat.processEvent(context.Background(), messageEvent("user1", "hello", "1"))
 
-	// Create a test event
-	event := slackevents.EventsAPIEvent{
-		Type: slackevents.CallbackEvent,
-		InnerEvent: slackevents.EventsAPIInnerEvent{
-			Type: string(slackevents.Message),
+	_, posts := service.calls()
+	require.Len(t, posts, 2)
+	assert.Equal(t, "fixed", posts[0].message)
+	assert.Contains(t, []string{"one", "two"}, posts[1].message)
+}
+
+func TestChatSupportsRandomOnlyAndDeprecatedMessage(t *testing.T) {
+	tests := []struct {
+		name     string
+		response Response
+		want     []string
+	}{
+		{
+			name:     "random only",
+			response: Response{Pattern: "hello", RandomMessages: []string{"random"}},
+			want:     []string{"random"},
+		},
+		{
+			name:     "deprecated messages fallback",
+			response: Response{Pattern: "hello", Messages: "legacy"},
+			want:     []string{"legacy"},
 		},
 	}
 
-	// Should not panic or error
-	chat.PushEvent(event)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service := &mockSlackService{}
+			chat := newTestChat(t, Config{Responses: []Response{tt.response}}, service)
+			chat.processEvent(context.Background(), messageEvent("user1", "hello", "1"))
 
-	// Give some time for async processing
-	time.Sleep(10 * time.Millisecond)
-}
-
-
-func TestChat_StopBeforeStart(t *testing.T) {
-	logger := zaptest.NewLogger(t)
-	config := Config{}
-	mockSlack := &mockSlackService{}
-	chat := NewChat(logger, config, mockSlack)
-
-	ctx := context.Background()
-
-	// Stop before start should not error
-	err := chat.Stop(ctx)
-	if err != nil {
-		t.Errorf("Stop() before Start() error = %v, want nil", err)
+			_, posts := service.calls()
+			messages := make([]string, 0, len(posts))
+			for _, post := range posts {
+				messages = append(messages, post.message)
+			}
+			assert.Equal(t, tt.want, messages)
+		})
 	}
 }
 
-func BenchmarkChat_PushEvent(b *testing.B) {
-	logger := zaptest.NewLogger(b)
-	config := Config{}
-	mockSlack := &mockSlackService{}
-	chat := NewChat(logger, config, mockSlack)
+func TestChatDeduplicatesMessages(t *testing.T) {
+	service := &mockSlackService{}
+	chat := newTestChat(t, Config{Responses: []Response{{Pattern: "hello", Message: "hi"}}}, service)
+	event := messageEvent("user1", "hello", "123.456")
 
-	ctx := context.Background()
-	_ = chat.Start(ctx)
-	defer func() { _ = chat.Stop(ctx) }()
+	chat.processEvent(context.Background(), event)
+	chat.processEvent(context.Background(), event)
 
-	event := slackevents.EventsAPIEvent{
-		Type: slackevents.CallbackEvent,
-		InnerEvent: slackevents.EventsAPIInnerEvent{
-			Type: string(slackevents.Message),
-		},
+	_, posts := service.calls()
+	assert.Len(t, posts, 1)
+}
+
+func TestChatIgnoresBotsAndMessageSubtypes(t *testing.T) {
+	service := &mockSlackService{}
+	chat := newTestChat(t, Config{Responses: []Response{{Pattern: "hello", Message: "hi"}}}, service)
+
+	botEvent := messageEvent("user1", "hello", "1")
+	botEvent.InnerEvent.Data.(*slackevents.MessageEvent).BotID = "bot1"
+	chat.processEvent(context.Background(), botEvent)
+
+	editedEvent := messageEvent("user1", "hello", "2")
+	editedEvent.InnerEvent.Data.(*slackevents.MessageEvent).SubType = "message_changed"
+	chat.processEvent(context.Background(), editedEvent)
+
+	_, posts := service.calls()
+	assert.Empty(t, posts)
+}
+
+func TestChatSetConfigIsAtomic(t *testing.T) {
+	service := &mockSlackService{}
+	chat := newTestChat(t, Config{Responses: []Response{{Pattern: "old", Message: "old"}}}, service)
+
+	err := chat.SetConfig(Config{Responses: []Response{{Pattern: "[", IsRegexp: true}}})
+	require.Error(t, err)
+	chat.processEvent(context.Background(), messageEvent("user1", "old", "1"))
+
+	_, posts := service.calls()
+	assert.Equal(t, []postCall{{"channel1", "old", ""}}, posts)
+}
+
+func TestChatConfigUpdatesAreRaceSafe(t *testing.T) {
+	service := &mockSlackService{}
+	chat := newTestChat(t, Config{Responses: []Response{{Pattern: "hello", Message: "hi"}}}, service)
+
+	var wg sync.WaitGroup
+	configErrors := make(chan error, 100)
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for range 100 {
+			configErrors <- chat.SetConfig(Config{Responses: []Response{{
+				Pattern: "hello", Message: "hi",
+			}}})
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := range 100 {
+			chat.processEvent(context.Background(), messageEvent("user1", "hello", string(rune(i+1))))
+		}
+	}()
+	wg.Wait()
+	close(configErrors)
+	for err := range configErrors {
+		assert.NoError(t, err)
+	}
+}
+
+func TestChatCanRestartAndStopConcurrently(t *testing.T) {
+	service := &mockSlackService{postCh: make(chan postCall, 1)}
+	chat := newTestChat(t, Config{Responses: []Response{{Pattern: "hello", Message: "hi"}}}, service)
+
+	require.NoError(t, chat.Start(context.Background()))
+	require.NoError(t, chat.Stop(context.Background()))
+	require.NoError(t, chat.Start(context.Background()))
+	chat.PushEvent(messageEvent("user1", "hello", "1"))
+
+	select {
+	case <-service.postCh:
+	case <-time.After(time.Second):
+		t.Fatal("restarted chat did not process an event")
 	}
 
-	b.ResetTimer()
-	for b.Loop() {
-		chat.PushEvent(event)
+	var wg sync.WaitGroup
+	errorsCh := make(chan error, 2)
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errorsCh <- chat.Stop(context.Background())
+		}()
 	}
+	wg.Wait()
+	close(errorsCh)
+	for err := range errorsCh {
+		assert.NoError(t, err)
+	}
+}
+
+func TestChatStopsWhenRunContextIsCanceled(t *testing.T) {
+	service := &mockSlackService{}
+	chat := newTestChat(t, Config{}, service)
+	ctx, cancel := context.WithCancel(context.Background())
+	require.NoError(t, chat.Start(ctx))
+	cancel()
+	require.Eventually(t, func() bool { return !chat.isConnected.Load() }, time.Second, time.Millisecond)
+	require.NoError(t, chat.Stop(context.Background()))
 }
