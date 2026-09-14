@@ -124,7 +124,7 @@ jobs:
       - name: Validate Compose configuration
         run: |
           cp example.env .env
-          docker compose config --quiet
+          CLOUDFLARE_API_TOKEN=ci CLOUDFLARE_TUNNEL_TOKEN=ci docker compose config --quiet
 
   benchmark:
     name: Benchmark
