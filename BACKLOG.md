@@ -36,6 +36,8 @@ Dependencies: SB-001
 
 ### SB-003: Deduplicate Slack event retries
 
+Status: Complete
+
 Prevent Slack retries from producing duplicate side effects.
 
 Acceptance criteria:

@@ -277,28 +277,29 @@ func TestDefault(t *testing.T) {
 
 func TestNewConfig(t *testing.T) {
 	opts := configOpts{
-		Version:                "1.0.0",
-		BuildTime:              "2023-01-01",
-		LogLevel:               "debug",
-		Environment:            "development",
-		DataDir:                "/custom/data",
-		ServerPort:             9000,
-		SlackToken:             "test-token",
-		SlackSigningSecret:     "test-secret",
-		OpenAIAPIKey:           "test-key",
-		OpenAIModel:            "gpt-5.6-luna",
-		OpenAIReasoningEffort:  "low",
-		PreferredUsers:         []string{"user1", "user2"},
-		PreferredChannels:      []string{"channel1"},
-		UserNotifyChannel:      "user-notify",
-		SlackEventsPath:        "/events",
-		ConfigFile:             "./config.yaml",
-		VibecheckEnabled:       true,
-		VibecheckBanDuration:   10 * time.Minute,
-		VibecheckGoodReactions: []string{"party"},
-		VibecheckGoodText:      []string{"passed"},
-		VibecheckBadReactions:  []string{"warning"},
-		VibecheckBadText:       []string{"failed"},
+		Version:                       "1.0.0",
+		BuildTime:                     "2023-01-01",
+		LogLevel:                      "debug",
+		Environment:                   "development",
+		DataDir:                       "/custom/data",
+		ServerPort:                    9000,
+		SlackToken:                    "test-token",
+		SlackSigningSecret:            "test-secret",
+		OpenAIAPIKey:                  "test-key",
+		OpenAIModel:                   "gpt-5.6-luna",
+		OpenAIReasoningEffort:         "low",
+		PreferredUsers:                []string{"user1", "user2"},
+		PreferredChannels:             []string{"channel1"},
+		UserNotifyChannel:             "user-notify",
+		SlackEventsPath:               "/events",
+		SlackEventDeduplicationWindow: 10 * time.Minute,
+		ConfigFile:                    "./config.yaml",
+		VibecheckEnabled:              true,
+		VibecheckBanDuration:          10 * time.Minute,
+		VibecheckGoodReactions:        []string{"party"},
+		VibecheckGoodText:             []string{"passed"},
+		VibecheckBadReactions:         []string{"warning"},
+		VibecheckBadText:              []string{"failed"},
 	}
 
 	config, err := newConfig(opts)
@@ -318,6 +319,10 @@ func TestNewConfig(t *testing.T) {
 	// Test nested config structures
 	if config.Server.ServerPort != 9000 {
 		t.Errorf("newConfig() Server.ServerPort = %v, want %v", config.Server.ServerPort, 9000)
+	}
+	if config.Server.SlackEventDeduplicationWindow != 10*time.Minute {
+		t.Errorf("newConfig() SlackEventDeduplicationWindow = %v, want %v",
+			config.Server.SlackEventDeduplicationWindow, 10*time.Minute)
 	}
 
 	if config.Slack.Token != "test-token" {

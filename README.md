@@ -57,21 +57,24 @@ task bot:run -- --help
 
 Useful settings:
 
-| Setting                   | Default             | Purpose                            |
-| ------------------------- | ------------------- | ---------------------------------- |
-| `CONFIG_FILE`             | `./config.yaml`     | YAML or JSON feature configuration |
-| `DATA_DIR`                | `./`                | SQLite and user-state storage      |
-| `SERVER_PORT`             | `4200`              | HTTP port                          |
-| `SLACK_EVENTS_PATH`       | `/api/slack/events` | Slack Events API path              |
-| `OPENAI_MODEL`            | application default | AI model                           |
-| `OPENAI_REASONING_EFFORT` | application default | Model reasoning effort             |
+| Setting                            | Default             | Purpose                            |
+| ---------------------------------- | ------------------- | ---------------------------------- |
+| `CONFIG_FILE`                      | `./config.yaml`     | YAML or JSON feature configuration |
+| `DATA_DIR`                         | `./`                | SQLite and user-state storage      |
+| `SERVER_PORT`                      | `4200`              | HTTP port                          |
+| `SLACK_EVENTS_PATH`                | `/api/slack/events` | Slack Events API path              |
+| `SLACK_EVENT_DEDUPLICATION_WINDOW` | `5m`                | Slack event retry retention window |
+| `OPENAI_MODEL`                     | application default | AI model                           |
+| `OPENAI_REASONING_EFFORT`          | application default | Model reasoning effort             |
 
 The Slack Events endpoint accepts only `POST` requests and limits request bodies to 1 MiB. Slack
 signature verification uses the original request bytes before JSON parsing. Each registered event
 processor has a 100-event dispatch queue. The endpoint acknowledges valid events without waiting for
 processors; when a processor's queue is full, its newest event is dropped and the overflow is logged
-without message content. Graceful shutdown drains these queues until the shutdown deadline and logs
-any work that remains.
+without message content. Events with the same Slack `event_id` are acknowledged but dispatched only
+once during the configured retention window. The cache retains at most 10,000 IDs; events without a
+usable ID are dispatched normally. Graceful shutdown drains processor queues until the shutdown
+deadline and logs any work that remains.
 
 Chat response changes in `config.yaml` reload while the bot runs. Restart after changing other feature
 settings.

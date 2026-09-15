@@ -1,4 +1,7 @@
 ---
+# Slack retries with the same event_id are dispatched only once during this window.
+slack_event_deduplication_window: 5m
+
 # Obituary/User notify service configuration
 user:
   notify_channel: ""

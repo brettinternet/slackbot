@@ -46,8 +46,9 @@ type CLIOverrides struct {
 	ConfigFile  *string
 
 	// Server settings
-	ServerPort     *uint32
-	SlackEventPath *string
+	ServerPort                    *uint32
+	SlackEventPath                *string
+	SlackEventDeduplicationWindow *time.Duration
 
 	// Slack settings
 	SlackToken         *string
@@ -191,6 +192,8 @@ func (cm *ConfigManager) mergeConfigs(fileConfig *FileConfig) configOpts {
 	opts.ConfigFile = stringWithOverride("./config.yaml", cm.cliOverrides.ConfigFile)
 	opts.ServerPort = uint32WithOverride(4200, cm.cliOverrides.ServerPort)
 	opts.SlackEventsPath = stringWithOverride("/api/slack/events", cm.cliOverrides.SlackEventPath)
+	opts.SlackEventDeduplicationWindow = durationWithFileAndOverride(
+		nil, http.DefaultSlackEventDeduplicationWindow, cm.cliOverrides.SlackEventDeduplicationWindow)
 
 	opts.SlackToken = stringWithOverride("", cm.cliOverrides.SlackToken)
 	opts.SlackSigningSecret = stringWithOverride("", cm.cliOverrides.SlackSigningSecret)
@@ -486,6 +489,10 @@ func ExtractCLIOverrides(cmd *cli.Command) *CLIOverrides {
 	if cmd.IsSet("slack-events-path") {
 		val := cmd.String("slack-events-path")
 		overrides.SlackEventPath = &val
+	}
+	if cmd.IsSet("slack-event-deduplication-window") {
+		val := cmd.Duration("slack-event-deduplication-window")
+		overrides.SlackEventDeduplicationWindow = &val
 	}
 	if cmd.IsSet("slack-token") || cmd.String("slack-token") != "" {
 		val := cmd.String("slack-token")

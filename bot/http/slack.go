@@ -117,11 +117,31 @@ func (h *Server) handleSlackEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.dispatchSlackEvent(eventsAPIEvent) {
+	eventID := slackEventID(eventsAPIEvent)
+	duplicate, accepted := h.eventDeduplicator.accept(eventID, func() bool {
+		return h.dispatchSlackEvent(eventsAPIEvent)
+	})
+	if duplicate {
+		h.log.Debug("Ignoring duplicate Slack event", zap.String("event_id", eventID))
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if !accepted {
 		http.Error(w, "Slack event processing is unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+func slackEventID(event slackevents.EventsAPIEvent) string {
+	switch data := event.Data.(type) {
+	case *slackevents.EventsAPICallbackEvent:
+		return data.EventID
+	case slackevents.EventsAPICallbackEvent:
+		return data.EventID
+	default:
+		return ""
+	}
 }
 
 func (h *Server) dispatchSlackEvent(event slackevents.EventsAPIEvent) bool {

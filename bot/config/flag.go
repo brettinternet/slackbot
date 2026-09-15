@@ -114,6 +114,15 @@ func Flags() []cli.Flag {
 				yaml.YAML("slack_events_path", altsrc.NewStringPtrSourcer(&configFile)),
 			),
 		},
+		&cli.DurationFlag{
+			Name:  "slack-event-deduplication-window",
+			Usage: "Retention window for deduplicating Slack event retries.",
+			Value: http.DefaultSlackEventDeduplicationWindow,
+			Sources: cli.NewValueSourceChain(
+				cli.EnvVar("SLACK_EVENT_DEDUPLICATION_WINDOW"),
+				yaml.YAML("slack_event_deduplication_window", altsrc.NewStringPtrSourcer(&configFile)),
+			),
+		},
 		&cli.StringFlag{
 			Name:     "slack-token",
 			Usage:    "Slack bot token for API authentication.",

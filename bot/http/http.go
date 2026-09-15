@@ -21,8 +21,9 @@ type slackService interface {
 }
 
 type Config struct {
-	ServerPort     uint32
-	SlackEventPath string // Path for the Slack events API endpoint
+	ServerPort                    uint32
+	SlackEventPath                string // Path for the Slack events API endpoint
+	SlackEventDeduplicationWindow time.Duration
 }
 
 type Server struct {
@@ -39,6 +40,7 @@ type Server struct {
 	dispatchAccepting    bool
 	dispatchWG           sync.WaitGroup
 	dispatchDone         chan struct{}
+	eventDeduplicator    *eventDeduplicator
 }
 
 func NewServer(log *zap.Logger, config Config, slack slackService) *Server {
@@ -48,6 +50,7 @@ func NewServer(log *zap.Logger, config Config, slack slackService) *Server {
 		config:            config,
 		slack:             slack,
 		dispatchAccepting: true,
+		eventDeduplicator: newEventDeduplicator(config.SlackEventDeduplicationWindow),
 	}
 	h.registerHealthEndpoints()
 	h.registerSlackEndpoints()

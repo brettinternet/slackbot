@@ -72,47 +72,49 @@ func (l BuildOpts) MakeConfig(cmd *cli.Command) (Config, error) {
 		environment = EnvironmentProduction.String()
 	}
 	opts := configOpts{
-		Version:                l.BuildVersion,
-		BuildTime:              l.BuildTime,
-		LogLevel:               cmd.String("log-level"),
-		Environment:            environment,
-		DataDir:                cmd.String("data-dir"),
-		ServerPort:             cmd.Uint32("server-port"),
-		SlackToken:             cmd.String("slack-token"),
-		SlackSigningSecret:     cmd.String("slack-signing-secret"),
-		OpenAIAPIKey:           cmd.String("openai-api-key"),
-		OpenAIModel:            cmd.String("openai-model"),
-		OpenAIReasoningEffort:  cmd.String("openai-reasoning-effort"),
-		PreferredUsers:         cmd.StringSlice("slack-preferred-user"),
-		PreferredChannels:      cmd.StringSlice("slack-preferred-channels"),
-		UserNotifyChannel:      cmd.String("slack-user-notify-channel"),
-		SlackEventsPath:        cmd.String("slack-events-path"),
-		ConfigFile:             cmd.String("config-file"),
-		PersonasConfig:         cmd.String("personas-config"),
-		PersonasStickyDuration: cmd.Duration("personas-sticky-duration"),
-		VibecheckBanDuration:   cmd.Duration("vibecheck-ban-duration"),
+		Version:                       l.BuildVersion,
+		BuildTime:                     l.BuildTime,
+		LogLevel:                      cmd.String("log-level"),
+		Environment:                   environment,
+		DataDir:                       cmd.String("data-dir"),
+		ServerPort:                    cmd.Uint32("server-port"),
+		SlackToken:                    cmd.String("slack-token"),
+		SlackSigningSecret:            cmd.String("slack-signing-secret"),
+		OpenAIAPIKey:                  cmd.String("openai-api-key"),
+		OpenAIModel:                   cmd.String("openai-model"),
+		OpenAIReasoningEffort:         cmd.String("openai-reasoning-effort"),
+		PreferredUsers:                cmd.StringSlice("slack-preferred-user"),
+		PreferredChannels:             cmd.StringSlice("slack-preferred-channels"),
+		UserNotifyChannel:             cmd.String("slack-user-notify-channel"),
+		SlackEventsPath:               cmd.String("slack-events-path"),
+		SlackEventDeduplicationWindow: cmd.Duration("slack-event-deduplication-window"),
+		ConfigFile:                    cmd.String("config-file"),
+		PersonasConfig:                cmd.String("personas-config"),
+		PersonasStickyDuration:        cmd.Duration("personas-sticky-duration"),
+		VibecheckBanDuration:          cmd.Duration("vibecheck-ban-duration"),
 	}
 
 	return newConfig(opts)
 }
 
 type configOpts struct {
-	Version               string
-	BuildTime             string
-	LogLevel              string
-	Environment           string
-	DataDir               string
-	ServerPort            uint32
-	SlackToken            string
-	SlackSigningSecret    string
-	OpenAIAPIKey          string
-	OpenAIModel           string
-	OpenAIReasoningEffort string
-	PreferredUsers        []string
-	PreferredChannels     []string
-	UserNotifyChannel     string
-	SlackEventsPath       string
-	ConfigFile            string
+	Version                       string
+	BuildTime                     string
+	LogLevel                      string
+	Environment                   string
+	DataDir                       string
+	ServerPort                    uint32
+	SlackToken                    string
+	SlackSigningSecret            string
+	OpenAIAPIKey                  string
+	OpenAIModel                   string
+	OpenAIReasoningEffort         string
+	PreferredUsers                []string
+	PreferredChannels             []string
+	UserNotifyChannel             string
+	SlackEventsPath               string
+	SlackEventDeduplicationWindow time.Duration
+	ConfigFile                    string
 	// AI Chat Personas Configuration
 	PersonasConfig         string
 	PersonasStickyDuration time.Duration
@@ -197,6 +199,8 @@ func newConfig(opts configOpts) (Config, error) {
 		Server: http.Config{
 			ServerPort:     opts.ServerPort,
 			SlackEventPath: opts.SlackEventsPath,
+			SlackEventDeduplicationWindow: Default(
+				opts.SlackEventDeduplicationWindow, http.DefaultSlackEventDeduplicationWindow),
 		},
 		Slack: slack.Config{
 			Token:             opts.SlackToken,
