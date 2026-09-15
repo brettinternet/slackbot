@@ -42,6 +42,7 @@ func NewContextStorage(dataDir string) (*ContextStorage, error) {
 
 	storage := &ContextStorage{db: db}
 	if err := storage.initSchema(); err != nil {
+		_ = db.Close()
 		return nil, fmt.Errorf("failed to initialize schema: %w", err)
 	}
 
@@ -53,42 +54,117 @@ func (cs *ContextStorage) Close() error {
 	return cs.db.Close()
 }
 
-// initSchema creates the necessary database tables
-func (cs *ContextStorage) initSchema() error {
-	query := `
-	CREATE TABLE IF NOT EXISTS conversation_context (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		user_id TEXT NOT NULL,
-		channel_id TEXT NOT NULL,
-		persona_name TEXT NOT NULL,
-		message TEXT NOT NULL,
-		role TEXT NOT NULL CHECK (role IN ('human', 'assistant')),
-		timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-	);
-	CREATE TABLE IF NOT EXISTS persona_assignment (
-		conversation_scope TEXT PRIMARY KEY,
-		persona_name TEXT NOT NULL,
-		timestamp DATETIME NOT NULL
-	);`
+type schemaMigration struct {
+	version int
+	name    string
+	query   string
+}
 
-	_, err := cs.db.Exec(query)
+var schemaMigrations = []schemaMigration{
+	{
+		version: 1,
+		name:    "create conversation context",
+		query: `
+			CREATE TABLE IF NOT EXISTS conversation_context (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				user_id TEXT NOT NULL,
+				channel_id TEXT NOT NULL,
+				persona_name TEXT NOT NULL,
+				message TEXT NOT NULL,
+				role TEXT NOT NULL CHECK (role IN ('human', 'assistant')),
+				timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+			);
+			CREATE INDEX IF NOT EXISTS idx_user_channel_persona
+				ON conversation_context (user_id, channel_id, persona_name);
+			CREATE INDEX IF NOT EXISTS idx_timestamp ON conversation_context (timestamp);`,
+	},
+	{
+		version: 2,
+		name:    "create persona assignments",
+		query: `
+			CREATE TABLE IF NOT EXISTS persona_assignment (
+				conversation_scope TEXT PRIMARY KEY,
+				persona_name TEXT NOT NULL,
+				timestamp DATETIME NOT NULL
+			);`,
+	},
+}
+
+// initSchema transactionally upgrades both new and pre-migration databases.
+// The migrations use idempotent DDL so databases created by older releases are
+// adopted without rewriting their conversation or persona data.
+func (cs *ContextStorage) initSchema() (err error) {
+	tx, err := cs.db.Begin()
 	if err != nil {
-		return err
+		return fmt.Errorf("begin schema migration: %w", err)
 	}
-
-	// Create indexes separately
-	indexQueries := []string{
-		`CREATE INDEX IF NOT EXISTS idx_user_channel_persona ON conversation_context (user_id, channel_id, persona_name);`,
-		`CREATE INDEX IF NOT EXISTS idx_timestamp ON conversation_context (timestamp);`,
-	}
-
-	for _, indexQuery := range indexQueries {
-		_, err := cs.db.Exec(indexQuery)
+	defer func() {
 		if err != nil {
-			return err
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err = tx.Exec(`
+		CREATE TABLE IF NOT EXISTS schema_migrations (
+			version INTEGER PRIMARY KEY,
+			name TEXT NOT NULL,
+			applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`); err != nil {
+		return fmt.Errorf("create schema migration history: %w", err)
+	}
+
+	rows, err := tx.Query(`SELECT version FROM schema_migrations ORDER BY version`)
+	if err != nil {
+		return fmt.Errorf("read schema migration history: %w", err)
+	}
+	var applied int
+	for rows.Next() {
+		var version int
+		if scanErr := rows.Scan(&version); scanErr != nil {
+			_ = rows.Close()
+			return fmt.Errorf("read schema migration version: %w", scanErr)
+		}
+		applied++
+		if version != applied {
+			_ = rows.Close()
+			return fmt.Errorf("schema migration history has a gap before version %d", version)
 		}
 	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		_ = rows.Close()
+		return fmt.Errorf("read schema migration history: %w", rowsErr)
+	}
+	if closeErr := rows.Close(); closeErr != nil {
+		return fmt.Errorf("close schema migration history: %w", closeErr)
+	}
+	if applied > len(schemaMigrations) {
+		return fmt.Errorf(
+			"database schema version %d is newer than supported version %d",
+			applied,
+			len(schemaMigrations),
+		)
+	}
 
+	for _, migration := range schemaMigrations[applied:] {
+		if migration.version != applied+1 {
+			return fmt.Errorf("internal schema migration order is invalid at version %d", migration.version)
+		}
+		if _, err = tx.Exec(migration.query); err != nil {
+			return fmt.Errorf("apply schema migration %d (%s): %w", migration.version, migration.name, err)
+		}
+		if _, err = tx.Exec(
+			`INSERT INTO schema_migrations (version, name) VALUES (?, ?)`,
+			migration.version,
+			migration.name,
+		); err != nil {
+			return fmt.Errorf("record schema migration %d (%s): %w", migration.version, migration.name, err)
+		}
+		applied = migration.version
+	}
+
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("commit schema migrations: %w", err)
+	}
 	return nil
 }
 

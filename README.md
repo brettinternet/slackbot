@@ -122,7 +122,10 @@ is not copied into this database. `aichat.max_context_age` controls both the old
 eligible for a response and its retention period (default `2h`). Expired messages are removed at
 startup and hourly thereafter. Persona assignments are retained for `aichat.sticky_duration`; expired
 assignments are removed by the same cleanup. Both settings apply to a running process after a valid
-configuration reload.
+configuration reload. On startup, ordered SQLite migrations upgrade databases created by older
+releases in one transaction and record applied versions in `schema_migrations`. Startup fails with
+the migration version and name if an upgrade cannot complete; existing conversation and persona data
+is left unchanged.
 
 Operators can delete one exact conversation scope, including its persisted persona assignment:
 

@@ -174,6 +174,8 @@ Acceptance criteria:
 
 ### SB-012: Introduce versioned database migrations
 
+Status: Complete
+
 Make persisted schema evolution explicit and repeatable.
 
 Acceptance criteria:

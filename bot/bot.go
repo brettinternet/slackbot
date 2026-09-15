@@ -204,10 +204,9 @@ func (s *Bot) initializeServices(ctx context.Context) error {
 	}
 
 	aichatConfig := s.configManager.GetAIChatConfig()
-	if s.ai != nil {
-		s.aichat = aichat.NewAIChat(s.log, aichatConfig, s.slack, s.ai)
-	} else {
-		s.aichat = aichat.NewAIChat(s.log, aichatConfig, s.slack, nil)
+	s.aichat, err = aichat.NewAIChat(s.log, aichatConfig, s.slack, s.ai)
+	if err != nil {
+		return fmt.Errorf("initialize aichat: %w", err)
 	}
 	if err := s.addShutdownStep("stop aichat", s.aichat.Stop); err != nil {
 		return err

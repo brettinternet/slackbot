@@ -144,14 +144,12 @@ func (a *AIChat) Metrics() Metrics {
 	}
 }
 
-func NewAIChat(log *zap.Logger, c Config, s slackService, a aiService) *AIChat {
+func NewAIChat(log *zap.Logger, c Config, s slackService, a aiService) (*AIChat, error) {
 	log = botlogging.Component(log, "aichat")
 	c = cloneConfig(c)
 	contextStorage, err := NewContextStorage(c.DataDir)
 	if err != nil {
-		log.Error("Failed to initialize context storage", zap.Error(err))
-		// Continue without context storage - fallback gracefully
-		contextStorage = nil
+		return nil, fmt.Errorf("initialize context storage: %w", err)
 	}
 
 	return &AIChat{
@@ -166,7 +164,7 @@ func NewAIChat(log *zap.Logger, c Config, s slackService, a aiService) *AIChat {
 		stopCh:          make(chan struct{}),
 		shutdownDone:    make(chan struct{}),
 		eventsCh:        make(chan slackevents.EventsAPIEvent, eventChannelSize),
-	}
+	}, nil
 }
 
 // ProcessorType returns a description of the processor type
