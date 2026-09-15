@@ -50,11 +50,12 @@ type mockSlackEventProcessor struct {
 	lastEvent          any
 }
 
-func (m *mockSlackEventProcessor) PushEvent(event slackevents.EventsAPIEvent) {
+func (m *mockSlackEventProcessor) PushEvent(event slackevents.EventsAPIEvent) error {
 	m.lastEventMu.Lock()
 	m.lastEvent = event
 	m.lastEventMu.Unlock()
 	m.processEventCalled.Store(true)
+	return nil
 }
 
 func (m *mockSlackEventProcessor) ProcessorType() string {
@@ -329,21 +330,69 @@ func TestServer_EventProcessing(t *testing.T) {
 }
 
 type blockingEventProcessor struct {
-	started chan struct{}
-	release chan struct{}
-	calls   atomic.Int64
+	started   chan struct{}
+	release   chan struct{}
+	calls     atomic.Int64
+	active    atomic.Int64
+	maxActive atomic.Int64
 }
 
-func (p *blockingEventProcessor) PushEvent(slackevents.EventsAPIEvent) {
+func (p *blockingEventProcessor) PushEvent(slackevents.EventsAPIEvent) error {
 	p.calls.Add(1)
+	active := p.active.Add(1)
+	defer p.active.Add(-1)
+	for maximum := p.maxActive.Load(); active > maximum; maximum = p.maxActive.Load() {
+		if p.maxActive.CompareAndSwap(maximum, active) {
+			break
+		}
+	}
 	select {
 	case p.started <- struct{}{}:
 	default:
 	}
 	<-p.release
+	return nil
 }
 
 func (p *blockingEventProcessor) ProcessorType() string { return "blocked" }
+
+type healthyEventProcessor struct {
+	processed chan struct{}
+	calls     atomic.Int64
+}
+
+func (p *healthyEventProcessor) PushEvent(slackevents.EventsAPIEvent) error {
+	p.calls.Add(1)
+	select {
+	case p.processed <- struct{}{}:
+	default:
+	}
+	return nil
+}
+
+func (p *healthyEventProcessor) ProcessorType() string { return "healthy" }
+
+type failingEventProcessor struct {
+	calls atomic.Int64
+}
+
+func (p *failingEventProcessor) PushEvent(slackevents.EventsAPIEvent) error {
+	p.calls.Add(1)
+	return errors.New("processor failure")
+}
+
+func (p *failingEventProcessor) ProcessorType() string { return "failing" }
+
+type panickingEventProcessor struct {
+	calls atomic.Int64
+}
+
+func (p *panickingEventProcessor) PushEvent(slackevents.EventsAPIEvent) error {
+	p.calls.Add(1)
+	panic("processor failure")
+}
+
+func (p *panickingEventProcessor) ProcessorType() string { return "panicking" }
 
 type acceptingSlackService struct{}
 
@@ -366,7 +415,7 @@ type internallyQueuedProcessor struct {
 	release chan struct{}
 }
 
-func (p *internallyQueuedProcessor) PushEvent(slackevents.EventsAPIEvent) {
+func (p *internallyQueuedProcessor) PushEvent(slackevents.EventsAPIEvent) error {
 	p.pending.Add(1)
 	select {
 	case p.started <- struct{}{}:
@@ -376,6 +425,7 @@ func (p *internallyQueuedProcessor) PushEvent(slackevents.EventsAPIEvent) {
 		<-p.release
 		p.pending.Add(-1)
 	}()
+	return nil
 }
 
 func (p *internallyQueuedProcessor) ProcessorType() string { return "internally-queued" }
@@ -484,6 +534,81 @@ func TestServer_SaturatedProcessorDoesNotDelayAcknowledgement(t *testing.T) {
 	}
 }
 
+func TestServer_StalledProcessorDoesNotDelayAnother(t *testing.T) {
+	server := NewServer(zaptest.NewLogger(t), Config{}, acceptingSlackService{})
+	stalled := &blockingEventProcessor{started: make(chan struct{}, 1), release: make(chan struct{})}
+	healthy := &healthyEventProcessor{processed: make(chan struct{}, 1)}
+	server.RegisterEventProcessor(stalled)
+	server.RegisterEventProcessor(healthy)
+
+	server.dispatchSlackEvent(slackevents.EventsAPIEvent{})
+	select {
+	case <-stalled.started:
+	case <-time.After(time.Second):
+		t.Fatal("stalled processor did not receive event")
+	}
+	select {
+	case <-healthy.processed:
+	case <-time.After(time.Second):
+		t.Fatal("healthy processor waited for stalled processor")
+	}
+
+	close(stalled.release)
+	if err := server.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+}
+
+func TestServer_FailingProcessorDoesNotStopDispatch(t *testing.T) {
+	core, logs := observer.New(zap.ErrorLevel)
+	server := NewServer(zap.New(core), Config{}, acceptingSlackService{})
+	failed := &failingEventProcessor{}
+	healthy := &healthyEventProcessor{processed: make(chan struct{}, 2)}
+	server.RegisterEventProcessor(failed)
+	server.RegisterEventProcessor(healthy)
+
+	server.dispatchSlackEvent(slackevents.EventsAPIEvent{})
+	server.dispatchSlackEvent(slackevents.EventsAPIEvent{})
+	if err := server.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+
+	if got := failed.calls.Load(); got != 2 {
+		t.Errorf("failing processor calls = %d, want 2", got)
+	}
+	if got := healthy.calls.Load(); got != 2 {
+		t.Errorf("healthy processor calls = %d, want 2", got)
+	}
+	if got := logs.FilterMessage("Slack event processor failed").Len(); got != 2 {
+		t.Errorf("processor error log count = %d, want 2", got)
+	}
+}
+
+func TestServer_PanickingProcessorDoesNotStopDispatch(t *testing.T) {
+	core, logs := observer.New(zap.ErrorLevel)
+	server := NewServer(zap.New(core), Config{}, acceptingSlackService{})
+	failed := &panickingEventProcessor{}
+	healthy := &healthyEventProcessor{processed: make(chan struct{}, 2)}
+	server.RegisterEventProcessor(failed)
+	server.RegisterEventProcessor(healthy)
+
+	server.dispatchSlackEvent(slackevents.EventsAPIEvent{})
+	server.dispatchSlackEvent(slackevents.EventsAPIEvent{})
+	if err := server.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+
+	if got := failed.calls.Load(); got != 2 {
+		t.Errorf("panicking processor calls = %d, want 2", got)
+	}
+	if got := healthy.calls.Load(); got != 2 {
+		t.Errorf("healthy processor calls = %d, want 2", got)
+	}
+	if got := logs.FilterMessage("Slack event processor panicked").Len(); got != 2 {
+		t.Errorf("panic log count = %d, want 2", got)
+	}
+}
+
 func TestServer_ConcurrentDeliveryAndShutdownDrain(t *testing.T) {
 	server := NewServer(zaptest.NewLogger(t), Config{SlackEventPath: "/slack/events"}, acceptingSlackService{})
 	processor := &blockingEventProcessor{started: make(chan struct{}, 1), release: make(chan struct{})}
@@ -515,6 +640,9 @@ func TestServer_ConcurrentDeliveryAndShutdownDrain(t *testing.T) {
 	}
 	if got := processor.calls.Load(); got != eventCount {
 		t.Errorf("processed events = %d, want %d", got, eventCount)
+	}
+	if got := processor.maxActive.Load(); got != 1 {
+		t.Errorf("maximum processor concurrency = %d, want 1", got)
 	}
 }
 

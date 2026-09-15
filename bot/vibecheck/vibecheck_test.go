@@ -466,7 +466,7 @@ func TestEventQueueDoesNotDropMoreThanOriginalCapacity(t *testing.T) {
 	go func() {
 		defer close(pushed)
 		for i := 0; i < eventCount; i++ {
-			service.PushEvent(slackevents.EventsAPIEvent{
+			_ = service.PushEvent(slackevents.EventsAPIEvent{
 				Type: slackevents.CallbackEvent,
 				InnerEvent: slackevents.EventsAPIInnerEvent{Data: &slackevents.MemberJoinedChannelEvent{
 					User: fmt.Sprintf("user-%d", i), Channel: "channel",

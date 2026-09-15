@@ -269,7 +269,7 @@ func TestChatCanRestartAndStopConcurrently(t *testing.T) {
 	require.NoError(t, chat.Start(context.Background()))
 	require.NoError(t, chat.Stop(context.Background()))
 	require.NoError(t, chat.Start(context.Background()))
-	chat.PushEvent(messageEvent("user1", "hello", "1"))
+	require.NoError(t, chat.PushEvent(messageEvent("user1", "hello", "1")))
 
 	select {
 	case <-service.postCh:

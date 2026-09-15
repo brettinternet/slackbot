@@ -16,7 +16,7 @@ const SlackEventMaxBodyBytes int64 = 1 << 20 // 1 MiB
 
 // slackEventProcessor is an interface for components that want to process Slack events
 type slackEventProcessor interface {
-	PushEvent(slackevents.EventsAPIEvent)
+	PushEvent(slackevents.EventsAPIEvent) error
 	ProcessorType() string
 }
 

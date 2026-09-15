@@ -237,9 +237,9 @@ func (a *AIChat) Stop(ctx context.Context) error {
 }
 
 // PushEvent adds an event to be processed by the AIChat feature
-func (a *AIChat) PushEvent(event slackevents.EventsAPIEvent) {
+func (a *AIChat) PushEvent(event slackevents.EventsAPIEvent) error {
 	if !a.isConnected.Load() || !a.enabled() {
-		return
+		return nil
 	}
 
 	a.queueDepth.Add(1)
@@ -254,6 +254,7 @@ func (a *AIChat) PushEvent(event slackevents.EventsAPIEvent) {
 			zap.Int64("queue_depth", a.queueDepth.Load()),
 			zap.Uint64("queue_drops", a.queueDrops.Load()))
 	}
+	return nil
 }
 
 func (a *AIChat) PendingEvents() int64 { return a.pendingEvents.Load() }

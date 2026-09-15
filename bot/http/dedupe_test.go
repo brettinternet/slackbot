@@ -73,8 +73,11 @@ type countingEventProcessor struct {
 	calls atomic.Int64
 }
 
-func (p *countingEventProcessor) PushEvent(slackevents.EventsAPIEvent) { p.calls.Add(1) }
-func (p *countingEventProcessor) ProcessorType() string                { return "counting" }
+func (p *countingEventProcessor) PushEvent(slackevents.EventsAPIEvent) error {
+	p.calls.Add(1)
+	return nil
+}
+func (p *countingEventProcessor) ProcessorType() string { return "counting" }
 
 func postSlackEventID(server *Server, eventID string) int {
 	body := fmt.Sprintf(`{"type":"event_callback","event_id":%q,"event":{"type":"message"}}`, eventID)

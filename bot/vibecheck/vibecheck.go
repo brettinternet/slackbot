@@ -248,19 +248,20 @@ func (c *Vibecheck) PendingEvents() int64 {
 	return 0
 }
 
-func (c *Vibecheck) PushEvent(event slackevents.EventsAPIEvent) {
+func (c *Vibecheck) PushEvent(event slackevents.EventsAPIEvent) error {
 	if !isRelevantEvent(event) {
-		return
+		return nil
 	}
 	run := c.run.Load()
 	if run == nil {
-		return
+		return nil
 	}
 	if run.pending() >= eventQueueCapacity && run.queueFullLogged.CompareAndSwap(false, true) {
 		c.log.Warn("Vibecheck event queue is full; applying backpressure",
 			zap.Int("queue_capacity", eventQueueCapacity))
 	}
 	run.enqueue(event)
+	return nil
 }
 
 func isRelevantEvent(event slackevents.EventsAPIEvent) bool {

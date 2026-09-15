@@ -69,10 +69,12 @@ Useful settings:
 
 The Slack Events endpoint accepts only `POST` requests and limits request bodies to 1 MiB. Slack
 signature verification uses the original request bytes before JSON parsing. Each registered event
-processor has a 100-event dispatch queue. The endpoint acknowledges valid events without waiting for
-processors; when a processor's queue is full, its newest event is dropped and the overflow is logged
-without message content. Events with the same Slack `event_id` are acknowledged but dispatched only
-once during the configured retention window. The cache retains at most 10,000 IDs; events without a
+processor has an independent single-worker, 100-event dispatch queue, so its event concurrency is
+bounded at one. The endpoint acknowledges valid events without waiting for processors; when a
+processor's queue is full, its newest event is dropped and the overflow is logged without message
+content. Processor errors and panics are logged and isolated from every other processor. Events with
+the same Slack `event_id` are acknowledged but dispatched only once during the configured retention
+window. The cache retains at most 10,000 IDs; events without a
 usable ID are dispatched normally. Graceful shutdown drains processor queues until the shutdown
 deadline and logs any work that remains.
 

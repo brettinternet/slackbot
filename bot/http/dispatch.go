@@ -67,7 +67,11 @@ func (d *slackEventDispatcher) pushSafely(event slackevents.EventsAPIEvent) {
 				zap.Any("panic", recovered))
 		}
 	}()
-	d.processor.PushEvent(event)
+	if err := d.processor.PushEvent(event); err != nil {
+		d.log.Error("Slack event processor failed",
+			zap.String("processor", d.processor.ProcessorType()),
+			zap.Error(err))
+	}
 }
 
 func (d *slackEventDispatcher) enqueue(event slackevents.EventsAPIEvent) bool {

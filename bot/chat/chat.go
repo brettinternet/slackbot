@@ -181,9 +181,9 @@ func (c *Chat) Stop(ctx context.Context) error {
 }
 
 // PushEvent adds an event to be processed by the Chat feature.
-func (c *Chat) PushEvent(event slackevents.EventsAPIEvent) {
+func (c *Chat) PushEvent(event slackevents.EventsAPIEvent) error {
 	if !c.isConnected.Load() {
-		return
+		return nil
 	}
 
 	c.pending.Add(1)
@@ -193,6 +193,7 @@ func (c *Chat) PushEvent(event slackevents.EventsAPIEvent) {
 		c.pending.Add(-1)
 		c.log.Warn("Chat events channel full, dropping event.")
 	}
+	return nil
 }
 
 func (c *Chat) PendingEvents() int64 { return c.pending.Load() }

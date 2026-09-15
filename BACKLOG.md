@@ -80,6 +80,8 @@ Acceptance criteria:
 
 ### SB-006: Isolate processor failures
 
+Status: Complete
+
 Ensure a slow or failed feature cannot stall unrelated Slack functionality.
 
 Acceptance criteria:

@@ -91,7 +91,9 @@ func TestSetConfigEnablesDisablesAndReplacesPersonas(t *testing.T) {
 	a.isConnected.Store(true)
 
 	a.SetConfig(Config{Enabled: false, Personas: map[string]string{"disabled": "prompt"}})
-	a.PushEvent(slackevents.EventsAPIEvent{})
+	if err := a.PushEvent(slackevents.EventsAPIEvent{}); err != nil {
+		t.Fatalf("PushEvent() error = %v", err)
+	}
 	if got := a.Metrics().QueueDepth; got != 0 {
 		t.Fatalf("disabled queue depth = %d, want 0", got)
 	}
@@ -99,7 +101,9 @@ func TestSetConfigEnablesDisablesAndReplacesPersonas(t *testing.T) {
 	personas := map[string]string{"new": "new prompt"}
 	a.SetConfig(Config{Enabled: true, Personas: personas, MaxContextMessages: 3})
 	personas["new"] = "mutated after reload"
-	a.PushEvent(slackevents.EventsAPIEvent{})
+	if err := a.PushEvent(slackevents.EventsAPIEvent{}); err != nil {
+		t.Fatalf("PushEvent() error = %v", err)
+	}
 	if got := a.Metrics().QueueDepth; got != 1 {
 		t.Fatalf("enabled queue depth = %d, want 1", got)
 	}

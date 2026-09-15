@@ -351,9 +351,9 @@ func (o *UserWatch) worker(ctx context.Context, done chan struct{}) {
 	}
 }
 
-func (o *UserWatch) PushEvent(event slackevents.EventsAPIEvent) {
+func (o *UserWatch) PushEvent(event slackevents.EventsAPIEvent) error {
 	if !o.isEnabled() {
-		return
+		return nil
 	}
 	if event.InnerEvent.Type == "team_join" || event.InnerEvent.Type == "user_change" {
 		o.pendingEvents.Add(1)
@@ -363,6 +363,7 @@ func (o *UserWatch) PushEvent(event slackevents.EventsAPIEvent) {
 			o.pendingEvents.Add(-1)
 		}
 	}
+	return nil
 }
 
 func (o *UserWatch) PendingEvents() int64 { return o.pendingEvents.Load() }

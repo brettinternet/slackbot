@@ -224,13 +224,17 @@ func TestStopCancelsGenerationAndDiscardsQueuedEvents(t *testing.T) {
 			User: "U1", Channel: "C1", Text: "<@UBOT> hello", TimeStamp: "1.0",
 		}},
 	}
-	a.PushEvent(event)
+	if err := a.PushEvent(event); err != nil {
+		t.Fatalf("PushEvent() error = %v", err)
+	}
 	select {
 	case <-generator.started:
 	case <-time.After(time.Second):
 		t.Fatal("generation did not start")
 	}
-	a.PushEvent(event)
+	if err := a.PushEvent(event); err != nil {
+		t.Fatalf("PushEvent() error = %v", err)
+	}
 	stopCtx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 	if err := a.Stop(stopCtx); err != nil {
@@ -356,7 +360,7 @@ func TestQueueMetricsTrackDepthAndDrops(t *testing.T) {
 	a := newTestAIChat(t, Config{})
 	a.isConnected.Store(true)
 	for i := 0; i < eventChannelSize+1; i++ {
-		a.PushEvent(slackevents.EventsAPIEvent{})
+		_ = a.PushEvent(slackevents.EventsAPIEvent{})
 	}
 	metrics := a.Metrics()
 	if metrics.QueueDepth != eventChannelSize || metrics.QueueDrops != 1 {
