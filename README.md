@@ -66,6 +66,9 @@ Useful settings:
 | `OPENAI_MODEL`            | application default | AI model                           |
 | `OPENAI_REASONING_EFFORT` | application default | Model reasoning effort             |
 
+The Slack Events endpoint accepts only `POST` requests and limits request bodies to 1 MiB. Slack
+signature verification uses the original request bytes before JSON parsing.
+
 Chat response changes in `config.yaml` reload while the bot runs. Restart after changing other feature
 settings.
 

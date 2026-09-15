@@ -2,8 +2,13 @@ package slack
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
+	"strconv"
 	"testing"
+	"time"
 
 	"go.uber.org/zap/zaptest"
 )
@@ -149,21 +154,37 @@ func TestSlack_Client_BeforeSetup(t *testing.T) {
 	}
 }
 
-func TestSlack_VerifyRequest_NoClient(t *testing.T) {
-	logger := zaptest.NewLogger(t)
-	config := Config{
-		Token:         "test-token",
-		SigningSecret: "test-secret",
+func TestSlack_VerifyRequest(t *testing.T) {
+	const signingSecret = "test-secret"
+	body := []byte(`{"type":"event_callback"}`)
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+	mac := hmac.New(sha256.New, []byte(signingSecret))
+	_, _ = mac.Write([]byte("v0:" + timestamp + ":" + string(body)))
+	signature := "v0=" + hex.EncodeToString(mac.Sum(nil))
+
+	tests := []struct {
+		name      string
+		body      []byte
+		signature string
+		wantError bool
+	}{
+		{name: "valid", body: body, signature: signature},
+		{name: "tampered body", body: append(body, ' '), signature: signature, wantError: true},
+		{name: "invalid signature", body: body, signature: "v0=invalid", wantError: true},
 	}
 
-	slack := NewSlack(logger, config)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			slack := NewSlack(zaptest.NewLogger(t), Config{SigningSecret: signingSecret})
+			headers := make(http.Header)
+			headers.Set("X-Slack-Request-Timestamp", timestamp)
+			headers.Set("X-Slack-Signature", tt.signature)
 
-	headers := make(http.Header)
-	body := []byte("test body")
-
-	err := slack.VerifyRequest(headers, body)
-	if err == nil {
-		t.Error("VerifyRequest() should return error when client is not initialized")
+			err := slack.VerifyRequest(headers, tt.body)
+			if (err != nil) != tt.wantError {
+				t.Errorf("VerifyRequest() error = %v, wantError %v", err, tt.wantError)
+			}
+		})
 	}
 }
 
@@ -286,7 +307,7 @@ func TestSlack_OrgURL_BeforeSetup(t *testing.T) {
 			t.Error("OrgURL() should panic when authResp is nil")
 		}
 	}()
-	
+
 	slack.OrgURL()
 }
 

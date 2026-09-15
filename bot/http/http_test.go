@@ -3,8 +3,11 @@ package http
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,13 +18,23 @@ import (
 // mockSlackService for testing
 type mockSlackService struct {
 	shouldVerifyFail bool
+	verifyCalls      int
+	verifiedBody     []byte
 }
 
 func (m *mockSlackService) VerifyRequest(headers http.Header, body []byte) error {
+	m.verifyCalls++
+	m.verifiedBody = append([]byte(nil), body...)
 	if m.shouldVerifyFail {
 		return http.ErrAbortHandler
 	}
 	return nil
+}
+
+type errorReader struct{}
+
+func (errorReader) Read([]byte) (int, error) {
+	return 0, errors.New("read failure")
 }
 
 // mockSlackEventProcessor for testing
@@ -141,6 +154,81 @@ func TestServer_SlackEventsEndpoint(t *testing.T) {
 	if w.Body.String() != expected {
 		t.Errorf("URL challenge response = %v, want %v", w.Body.String(), expected)
 	}
+	if got := string(mockSlack.verifiedBody); got != challengeBody {
+		t.Errorf("VerifyRequest() body = %q, want original body %q", got, challengeBody)
+	}
+}
+
+func TestServer_SlackEventsEndpoint_RequestValidation(t *testing.T) {
+	newServer := func(t *testing.T) (*Server, *mockSlackService) {
+		t.Helper()
+		mockSlack := &mockSlackService{}
+		server := NewServer(zaptest.NewLogger(t), Config{SlackEventPath: "/slack/events"}, mockSlack)
+		return server, mockSlack
+	}
+
+	t.Run("method", func(t *testing.T) {
+		server, mockSlack := newServer(t)
+		req := httptest.NewRequest(http.MethodGet, "/slack/events", nil)
+		w := httptest.NewRecorder()
+
+		server.serveMux.ServeHTTP(w, req)
+
+		if w.Code != http.StatusMethodNotAllowed {
+			t.Errorf("GET status = %d, want %d", w.Code, http.StatusMethodNotAllowed)
+		}
+		if got := w.Header().Get("Allow"); got != http.MethodPost {
+			t.Errorf("Allow header = %q, want %q", got, http.MethodPost)
+		}
+		if mockSlack.verifyCalls != 0 {
+			t.Errorf("VerifyRequest() calls = %d, want 0", mockSlack.verifyCalls)
+		}
+	})
+
+	t.Run("oversized body", func(t *testing.T) {
+		server, mockSlack := newServer(t)
+		body := strings.Repeat("x", int(SlackEventMaxBodyBytes)+1)
+		req := httptest.NewRequest(http.MethodPost, "/slack/events", strings.NewReader(body))
+		w := httptest.NewRecorder()
+
+		server.serveMux.ServeHTTP(w, req)
+
+		if w.Code != http.StatusRequestEntityTooLarge {
+			t.Errorf("oversized request status = %d, want %d", w.Code, http.StatusRequestEntityTooLarge)
+		}
+		if mockSlack.verifyCalls != 0 {
+			t.Errorf("VerifyRequest() calls = %d, want 0", mockSlack.verifyCalls)
+		}
+	})
+
+	t.Run("malformed JSON", func(t *testing.T) {
+		server, mockSlack := newServer(t)
+		const body = `{"type":`
+		req := httptest.NewRequest(http.MethodPost, "/slack/events", strings.NewReader(body))
+		w := httptest.NewRecorder()
+
+		server.serveMux.ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("malformed request status = %d, want %d", w.Code, http.StatusBadRequest)
+		}
+		if got := string(mockSlack.verifiedBody); got != body {
+			t.Errorf("VerifyRequest() body = %q, want original body %q", got, body)
+		}
+	})
+
+	t.Run("body read failure", func(t *testing.T) {
+		server, _ := newServer(t)
+		req := httptest.NewRequest(http.MethodPost, "/slack/events", nil)
+		req.Body = io.NopCloser(errorReader{})
+		w := httptest.NewRecorder()
+
+		server.serveMux.ServeHTTP(w, req)
+
+		if w.Code != http.StatusInternalServerError {
+			t.Errorf("read failure status = %d, want %d", w.Code, http.StatusInternalServerError)
+		}
+	})
 }
 
 func TestServer_SlackEventsEndpoint_VerificationFail(t *testing.T) {
@@ -161,6 +249,9 @@ func TestServer_SlackEventsEndpoint_VerificationFail(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("Failed verification should return 401, got %d", w.Code)
+	}
+	if got := string(mockSlack.verifiedBody); got != challengeBody {
+		t.Errorf("VerifyRequest() body = %q, want original body %q", got, challengeBody)
 	}
 }
 

@@ -6,6 +6,8 @@ Prioritized improvements for reliability, security, operability, and maintainabi
 
 ### SB-001: Harden the Slack Events endpoint
 
+Status: Complete
+
 Limit and validate inbound requests before parsing them.
 
 Acceptance criteria:

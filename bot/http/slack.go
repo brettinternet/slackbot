@@ -2,6 +2,7 @@ package http
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -9,6 +10,9 @@ import (
 	"github.com/slack-go/slack/slackevents"
 	"go.uber.org/zap"
 )
+
+// SlackEventMaxBodyBytes is the largest Slack Events request body accepted by the server.
+const SlackEventMaxBodyBytes int64 = 1 << 20 // 1 MiB
 
 // slackEventProcessor is an interface for components that want to process Slack events
 type slackEventProcessor interface {
@@ -36,10 +40,23 @@ func (h *Server) registerSlackEndpoints() {
 
 // handleSlackEvents processes Slack events
 func (h *Server) handleSlackEvents(w http.ResponseWriter, r *http.Request) {
-	body, err := readRequestBody(r)
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	body, err := readRequestBody(w, r)
 	if err != nil {
-		h.log.Error("Failed to read request body.", zap.Error(err))
-		w.WriteHeader(http.StatusBadRequest)
+		var maxBytesError *http.MaxBytesError
+		if errors.As(err, &maxBytesError) {
+			h.log.Warn("Slack event request body exceeds limit",
+				zap.Int64("limitBytes", SlackEventMaxBodyBytes))
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return
+		}
+		h.log.Error("Failed to read Slack event request body", zap.Error(err))
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
@@ -54,8 +71,8 @@ func (h *Server) handleSlackEvents(w http.ResponseWriter, r *http.Request) {
 		slackevents.OptionNoVerifyToken(),
 	)
 	if err != nil {
-		h.log.Error("Failed to parse Slack event.", zap.Error(err))
-		w.WriteHeader(http.StatusInternalServerError)
+		h.log.Warn("Failed to parse Slack event", zap.Error(err))
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
@@ -63,8 +80,8 @@ func (h *Server) handleSlackEvents(w http.ResponseWriter, r *http.Request) {
 	if eventsAPIEvent.Type == slackevents.URLVerification {
 		var challenge *slackevents.ChallengeResponse
 		if err := json.Unmarshal(body, &challenge); err != nil {
-			h.log.Error("Failed to unmarshal challenge", zap.Error(err))
-			w.WriteHeader(http.StatusInternalServerError)
+			h.log.Warn("Failed to unmarshal Slack challenge", zap.Error(err))
+			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -98,10 +115,10 @@ func (h *Server) handleSlackEvents(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func readRequestBody(r *http.Request) ([]byte, error) {
+func readRequestBody(w http.ResponseWriter, r *http.Request) ([]byte, error) {
 	if r.Body == nil {
 		return nil, fmt.Errorf("request body is nil")
 	}
 	defer func() { _ = r.Body.Close() }()
-	return io.ReadAll(r.Body)
+	return io.ReadAll(http.MaxBytesReader(w, r.Body, SlackEventMaxBodyBytes))
 }
