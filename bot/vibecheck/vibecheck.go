@@ -14,6 +14,7 @@ import (
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 	"go.uber.org/zap"
+	botmetrics "slackbot.arpa/bot/metrics"
 	"slackbot.arpa/tools/random"
 )
 
@@ -144,6 +145,7 @@ type Vibecheck struct {
 	run         atomic.Pointer[vibecheckRun]
 	kickedUsers *kickedUsersManager
 	dedupe      *messageDeduplicator
+	metrics     *botmetrics.Metrics
 
 	kickDelay        time.Duration
 	rejoinKickDelay  time.Duration
@@ -152,10 +154,14 @@ type Vibecheck struct {
 	maximumKickTries int
 }
 
-func NewVibecheck(log *zap.Logger, config Config, api slackAPI) (*Vibecheck, error) {
+func NewVibecheck(log *zap.Logger, config Config, api slackAPI, metricSet ...*botmetrics.Metrics) (*Vibecheck, error) {
 	kickedUsers, err := newKickedUsersManager(log, config.DataDir)
 	if err != nil {
 		return nil, fmt.Errorf("initialize kicked users: %w", err)
+	}
+	var m *botmetrics.Metrics
+	if len(metricSet) > 0 {
+		m = metricSet[0]
 	}
 	return &Vibecheck{
 		log:              log,
@@ -163,6 +169,7 @@ func NewVibecheck(log *zap.Logger, config Config, api slackAPI) (*Vibecheck, err
 		api:              api,
 		kickedUsers:      kickedUsers,
 		dedupe:           newMessageDeduplicator(messageDedupeDuration),
+		metrics:          m,
 		kickDelay:        defaultKickDelay,
 		rejoinKickDelay:  defaultRejoinKickDelay,
 		kickRetryDelay:   defaultKickRetryDelay,
@@ -317,6 +324,9 @@ func (c *Vibecheck) handleMessageEvent(run *vibecheckRun, ev *slackevents.Messag
 		weight = 0.2
 	}
 	passed := random.Bool(weight)
+	if c.metrics != nil {
+		c.metrics.IncVibecheckOutcome(passed)
+	}
 	reaction := "vibecheck"
 	if passed {
 		reaction = "ok"

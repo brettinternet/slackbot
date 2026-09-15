@@ -113,6 +113,8 @@ Dependencies: SB-004
 
 ### SB-008: Add optional Prometheus metrics
 
+Status: Complete
+
 Provide Prometheus instrumentation without requiring it in deployments.
 
 Acceptance criteria:

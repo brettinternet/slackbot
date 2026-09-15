@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	botmetrics "slackbot.arpa/bot/metrics"
 )
 
 const DefaultServerPort = 4200
@@ -24,6 +25,7 @@ type Config struct {
 	ServerPort                    uint32
 	SlackEventPath                string // Path for the Slack events API endpoint
 	SlackEventDeduplicationWindow time.Duration
+	Metrics                       botmetrics.Config
 }
 
 type Server struct {
@@ -42,9 +44,17 @@ type Server struct {
 	dispatchWG           sync.WaitGroup
 	dispatchDone         chan struct{}
 	eventDeduplicator    *eventDeduplicator
+	metrics              *botmetrics.Metrics
 }
 
-func NewServer(log *zap.Logger, config Config, slack slackService) *Server {
+func NewServer(log *zap.Logger, config Config, slack slackService, metricSet ...*botmetrics.Metrics) *Server {
+	var m *botmetrics.Metrics
+	if len(metricSet) > 0 {
+		m = metricSet[0]
+	}
+	if config.Metrics.Enabled && m == nil {
+		m = botmetrics.New()
+	}
 	h := &Server{
 		log:               log,
 		serveMux:          http.NewServeMux(),
@@ -52,10 +62,12 @@ func NewServer(log *zap.Logger, config Config, slack slackService) *Server {
 		slack:             slack,
 		dispatchAccepting: true,
 		eventDeduplicator: newEventDeduplicator(config.SlackEventDeduplicationWindow),
+		metrics:           m,
 		listen:            net.Listen,
 	}
 	h.registerHealthEndpoints()
 	h.registerSlackEndpoints()
+	h.registerMetricsEndpoint()
 	return h
 }
 
@@ -72,7 +84,7 @@ func (h *Server) Run(ctx context.Context) error {
 
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           h.serveMux,
+		Handler:           h.handler(),
 		ReadHeaderTimeout: time.Second * 10,
 		ReadTimeout:       time.Second * 30,
 		WriteTimeout:      time.Second * 30,

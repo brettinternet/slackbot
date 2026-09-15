@@ -13,6 +13,7 @@ import (
 	yaml "github.com/urfave/cli-altsrc/v3/yaml"
 	"github.com/urfave/cli/v3"
 	"slackbot.arpa/bot/http"
+	botmetrics "slackbot.arpa/bot/metrics"
 )
 
 func Flags() []cli.Flag {
@@ -122,6 +123,17 @@ func Flags() []cli.Flag {
 				cli.EnvVar("SLACK_EVENT_DEDUPLICATION_WINDOW"),
 				yaml.YAML("slack_event_deduplication_window", altsrc.NewStringPtrSourcer(&configFile)),
 			),
+		},
+		&cli.BoolFlag{
+			Name:    "metrics-enabled",
+			Usage:   "Expose Prometheus metrics.",
+			Sources: cli.EnvVars("METRICS_ENABLED"),
+		},
+		&cli.StringFlag{
+			Name:    "metrics-path",
+			Usage:   "HTTP path for Prometheus metrics.",
+			Value:   botmetrics.DefaultPath,
+			Sources: cli.EnvVars("METRICS_PATH"),
 		},
 		&cli.StringFlag{
 			Name:     "slack-token",

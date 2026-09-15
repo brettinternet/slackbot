@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/slack-go/slack"
 	"go.uber.org/zap"
+	botmetrics "slackbot.arpa/bot/metrics"
 )
 
 type Config struct {
@@ -21,12 +23,18 @@ type Slack struct {
 	config   Config
 	client   *slack.Client
 	authResp *slack.AuthTestResponse
+	metrics  *botmetrics.Metrics
 }
 
-func NewSlack(log *zap.Logger, config Config) *Slack {
+func NewSlack(log *zap.Logger, config Config, metricSet ...*botmetrics.Metrics) *Slack {
+	var m *botmetrics.Metrics
+	if len(metricSet) > 0 {
+		m = metricSet[0]
+	}
 	return &Slack{
-		log:    log,
-		config: config,
+		log:     log,
+		config:  config,
+		metrics: m,
 	}
 }
 
@@ -37,6 +45,12 @@ func (s *Slack) Setup(ctx context.Context) error {
 
 	clientOpts := []slack.Option{
 		slack.OptionDebug(s.config.Debug),
+	}
+	if s.metrics != nil {
+		clientOpts = append(clientOpts, slack.OptionHTTPClient(&instrumentedHTTPClient{
+			client:  http.DefaultClient,
+			metrics: s.metrics,
+		}))
 	}
 
 	s.client = slack.New(s.config.Token, clientOpts...)
@@ -139,6 +153,21 @@ func (s *Slack) VerifyRequest(header http.Header, body []byte) error {
 	}
 
 	return nil
+}
+
+type instrumentedHTTPClient struct {
+	client interface {
+		Do(*http.Request) (*http.Response, error)
+	}
+	metrics *botmetrics.Metrics
+}
+
+func (c *instrumentedHTTPClient) Do(req *http.Request) (*http.Response, error) {
+	started := time.Now()
+	resp, err := c.client.Do(req)
+	failed := err != nil || resp.StatusCode >= http.StatusBadRequest
+	c.metrics.ObserveExternalRequest("slack", started, failed)
+	return resp, err
 }
 
 func (s *Slack) OrgURL() string {

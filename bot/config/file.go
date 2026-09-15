@@ -18,6 +18,7 @@ import (
 	"go.uber.org/zap"
 	"slackbot.arpa/bot/aichat"
 	"slackbot.arpa/bot/chat"
+	botmetrics "slackbot.arpa/bot/metrics"
 	"slackbot.arpa/bot/showerthought"
 	"slackbot.arpa/bot/user"
 	"slackbot.arpa/bot/vibecheck"
@@ -26,6 +27,7 @@ import (
 // FileConfig represents the entire configuration file structure
 type FileConfig struct {
 	SlackEventDeduplicationWindow *time.Duration           `json:"slack_event_deduplication_window" yaml:"slack_event_deduplication_window"`
+	Metrics                       botmetrics.FileConfig    `json:"metrics" yaml:"metrics"`
 	User                          user.FileConfig          `json:"user" yaml:"user"`
 	Chat                          chat.FileConfig          `json:"chat" yaml:"chat"`
 	Vibecheck                     vibecheck.FileConfig     `json:"vibecheck" yaml:"vibecheck"`

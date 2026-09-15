@@ -19,6 +19,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
 	"go.uber.org/zap/zaptest/observer"
+	botmetrics "slackbot.arpa/bot/metrics"
 )
 
 // mockSlackService for testing
@@ -60,6 +61,77 @@ func (m *mockSlackEventProcessor) PushEvent(event slackevents.EventsAPIEvent) er
 
 func (m *mockSlackEventProcessor) ProcessorType() string {
 	return "mock"
+}
+
+func TestServer_MetricsEndpoint(t *testing.T) {
+	t.Run("disabled by default", func(t *testing.T) {
+		server := NewServer(zaptest.NewLogger(t), Config{}, &mockSlackService{})
+		response := httptest.NewRecorder()
+		server.handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("metrics status = %d, want %d", response.Code, http.StatusNotFound)
+		}
+	})
+
+	t.Run("enabled at configured path", func(t *testing.T) {
+		server := NewServer(zaptest.NewLogger(t), Config{Metrics: botmetrics.Config{
+			Enabled: true,
+			Path:    "/internal/metrics",
+		}}, &mockSlackService{})
+
+		server.handler().ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/health", nil))
+		response := httptest.NewRecorder()
+		server.handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/internal/metrics", nil))
+		if response.Code != http.StatusOK {
+			t.Fatalf("metrics status = %d, want %d", response.Code, http.StatusOK)
+		}
+		body := response.Body.String()
+		if !strings.Contains(body, `slackbot_http_requests_total{route="health",status="200"} 1`) {
+			t.Fatalf("metrics body missing health request counter:\n%s", body)
+		}
+	})
+}
+
+func TestProcessorQueueDepthIncludesInFlightWork(t *testing.T) {
+	metricSet := botmetrics.New()
+	processor := &blockingEventProcessor{
+		started: make(chan struct{}, 1),
+		release: make(chan struct{}),
+	}
+	dispatcher := newSlackEventDispatcher(zaptest.NewLogger(t), processor, metricSet)
+	done := make(chan struct{})
+	go func() {
+		dispatcher.run()
+		close(done)
+	}()
+
+	if !dispatcher.enqueue(slackevents.EventsAPIEvent{}) {
+		t.Fatal("enqueue() = false, want true")
+	}
+	select {
+	case <-processor.started:
+	case <-time.After(time.Second):
+		t.Fatal("processor did not start")
+	}
+	assertMetricContains(t, metricSet, `slackbot_processor_queue_depth{processor="unknown"} 1`)
+
+	close(processor.release)
+	deadline := time.Now().Add(time.Second)
+	for dispatcher.pending.Load() != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	assertMetricContains(t, metricSet, `slackbot_processor_queue_depth{processor="unknown"} 0`)
+	close(dispatcher.queue)
+	<-done
+}
+
+func assertMetricContains(t *testing.T, metricSet *botmetrics.Metrics, want string) {
+	t.Helper()
+	response := httptest.NewRecorder()
+	metricSet.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if !strings.Contains(response.Body.String(), want) {
+		t.Fatalf("metrics body missing %q:\n%s", want, response.Body.String())
+	}
 }
 
 func TestNewServer(t *testing.T) {

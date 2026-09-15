@@ -6,6 +6,7 @@ import (
 
 	"github.com/slack-go/slack/slackevents"
 	"go.uber.org/zap"
+	botmetrics "slackbot.arpa/bot/metrics"
 )
 
 // SlackEventQueueCapacity is the maximum number of events waiting to be handed
@@ -22,14 +23,20 @@ type slackEventDispatcher struct {
 	stateMu   sync.Mutex
 	stopped   bool
 	inFlight  int
+	metrics   *botmetrics.Metrics
 }
 
-func newSlackEventDispatcher(log *zap.Logger, processor slackEventProcessor) *slackEventDispatcher {
+func newSlackEventDispatcher(log *zap.Logger, processor slackEventProcessor, metricSet ...*botmetrics.Metrics) *slackEventDispatcher {
+	var m *botmetrics.Metrics
+	if len(metricSet) > 0 {
+		m = metricSet[0]
+	}
 	return &slackEventDispatcher{
 		log:       log,
 		processor: processor,
 		queue:     make(chan slackevents.EventsAPIEvent, SlackEventQueueCapacity),
 		stop:      make(chan struct{}),
+		metrics:   m,
 	}
 }
 
@@ -50,7 +57,8 @@ func (d *slackEventDispatcher) run() {
 				return
 			}
 			if !d.claim() {
-				d.pending.Add(-1)
+				depth := d.pending.Add(-1)
+				d.setQueueDepth(depth)
 				return
 			}
 			d.pushSafely(event)
@@ -75,12 +83,14 @@ func (d *slackEventDispatcher) pushSafely(event slackevents.EventsAPIEvent) {
 }
 
 func (d *slackEventDispatcher) enqueue(event slackevents.EventsAPIEvent) bool {
-	d.pending.Add(1)
+	depth := d.pending.Add(1)
+	d.setQueueDepth(depth)
 	select {
 	case d.queue <- event:
 		return true
 	default:
-		d.pending.Add(-1)
+		depth = d.pending.Add(-1)
+		d.setQueueDepth(depth)
 		return false
 	}
 }
@@ -98,8 +108,15 @@ func (d *slackEventDispatcher) claim() bool {
 func (d *slackEventDispatcher) complete() {
 	d.stateMu.Lock()
 	d.inFlight--
-	d.pending.Add(-1)
+	depth := d.pending.Add(-1)
 	d.stateMu.Unlock()
+	d.setQueueDepth(depth)
+}
+
+func (d *slackEventDispatcher) setQueueDepth(depth int64) {
+	if d.metrics != nil {
+		d.metrics.SetProcessorQueueDepth(d.processor.ProcessorType(), depth)
+	}
 }
 
 func (d *slackEventDispatcher) abandon() (abandoned, inFlight int) {

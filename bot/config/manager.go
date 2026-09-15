@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"slackbot.arpa/bot/aichat"
 	"slackbot.arpa/bot/chat"
 	"slackbot.arpa/bot/http"
+	botmetrics "slackbot.arpa/bot/metrics"
 	"slackbot.arpa/bot/showerthought"
 	"slackbot.arpa/bot/slack"
 	"slackbot.arpa/bot/user"
@@ -51,6 +53,8 @@ type CLIOverrides struct {
 	ServerPort                    *uint32
 	SlackEventPath                *string
 	SlackEventDeduplicationWindow *time.Duration
+	MetricsEnabled                *bool
+	MetricsPath                   *string
 
 	// Slack settings
 	SlackToken         *string
@@ -197,6 +201,10 @@ func (cm *ConfigManager) mergeConfigs(fileConfig *FileConfig) configOpts {
 		fileConfig.SlackEventDeduplicationWindow,
 		http.DefaultSlackEventDeduplicationWindow,
 		cm.cliOverrides.SlackEventDeduplicationWindow)
+	opts.MetricsEnabled = boolWithFileAndOverride(
+		fileConfig.Metrics.Enabled, false, cm.cliOverrides.MetricsEnabled)
+	opts.MetricsPath = stringWithFileAndOverride(
+		fileConfig.Metrics.Path, botmetrics.DefaultPath, cm.cliOverrides.MetricsPath)
 
 	opts.SlackToken = stringWithOverride("", cm.cliOverrides.SlackToken)
 	opts.SlackSigningSecret = stringWithOverride("", cm.cliOverrides.SlackSigningSecret)
@@ -373,6 +381,9 @@ func validateFileConfig(fileConfig *FileConfig) error {
 	if fileConfig.SlackEventDeduplicationWindow != nil && *fileConfig.SlackEventDeduplicationWindow <= 0 {
 		return errors.New("slack_event_deduplication_window must be positive")
 	}
+	if fileConfig.Metrics.Path != nil && (!strings.HasPrefix(*fileConfig.Metrics.Path, "/") || *fileConfig.Metrics.Path == "/") {
+		return errors.New("metrics.path must be an absolute non-root path")
+	}
 	return nil
 }
 
@@ -398,6 +409,9 @@ func restartRequiredChanges(oldConfig, newConfig *Config) []string {
 	}
 	if oldConfig.Server.SlackEventDeduplicationWindow != newConfig.Server.SlackEventDeduplicationWindow {
 		changed = append(changed, "slack_event_deduplication_window")
+	}
+	if oldConfig.Server.Metrics != newConfig.Server.Metrics {
+		changed = append(changed, "metrics")
 	}
 	if !reflect.DeepEqual(oldConfig.Slack, newConfig.Slack) {
 		changed = append(changed, "slack")
@@ -565,6 +579,14 @@ func ExtractCLIOverrides(cmd *cli.Command) *CLIOverrides {
 		val := cmd.Duration("slack-event-deduplication-window")
 		overrides.SlackEventDeduplicationWindow = &val
 	}
+	if cmd.IsSet("metrics-enabled") {
+		val := cmd.Bool("metrics-enabled")
+		overrides.MetricsEnabled = &val
+	}
+	if cmd.IsSet("metrics-path") {
+		val := cmd.String("metrics-path")
+		overrides.MetricsPath = &val
+	}
 	if cmd.IsSet("slack-token") || cmd.String("slack-token") != "" {
 		val := cmd.String("slack-token")
 		overrides.SlackToken = &val
@@ -632,6 +654,16 @@ func ExtractCLIOverrides(cmd *cli.Command) *CLIOverrides {
 func stringWithOverride(defaultValue string, override *string) string {
 	if override != nil {
 		return *override
+	}
+	return defaultValue
+}
+
+func stringWithFileAndOverride(fileValue *string, defaultValue string, override *string) string {
+	if override != nil {
+		return *override
+	}
+	if fileValue != nil {
+		return *fileValue
 	}
 	return defaultValue
 }

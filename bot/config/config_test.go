@@ -191,6 +191,9 @@ func TestBuildOpts_MakeConfig_Defaults(t *testing.T) {
 	if config.AI.ReasoningEffort != "medium" {
 		t.Errorf("Config.AI.ReasoningEffort = %q, want medium", config.AI.ReasoningEffort)
 	}
+	if config.Server.Metrics.Enabled || config.Server.Metrics.Path != "/metrics" {
+		t.Errorf("Config.Server.Metrics = %+v, want disabled at /metrics", config.Server.Metrics)
+	}
 }
 
 func TestRelativeToAbsolutePath(t *testing.T) {
@@ -293,6 +296,8 @@ func TestNewConfig(t *testing.T) {
 		UserNotifyChannel:             "user-notify",
 		SlackEventsPath:               "/events",
 		SlackEventDeduplicationWindow: 10 * time.Minute,
+		MetricsEnabled:                true,
+		MetricsPath:                   "/internal/metrics",
 		ConfigFile:                    "./config.yaml",
 		VibecheckEnabled:              true,
 		VibecheckBanDuration:          10 * time.Minute,
@@ -324,6 +329,9 @@ func TestNewConfig(t *testing.T) {
 		t.Errorf("newConfig() SlackEventDeduplicationWindow = %v, want %v",
 			config.Server.SlackEventDeduplicationWindow, 10*time.Minute)
 	}
+	if !config.Server.Metrics.Enabled || config.Server.Metrics.Path != "/internal/metrics" {
+		t.Errorf("newConfig() Metrics = %+v, want enabled at /internal/metrics", config.Server.Metrics)
+	}
 
 	if config.Slack.Token != "test-token" {
 		t.Errorf("newConfig() Slack.Token = %v, want %v", config.Slack.Token, "test-token")
@@ -348,6 +356,17 @@ func TestNewConfig(t *testing.T) {
 	}
 	if config.AI.ReasoningEffort != "low" {
 		t.Errorf("newConfig() AI.ReasoningEffort = %q, want low", config.AI.ReasoningEffort)
+	}
+}
+
+func TestNewConfigRejectsInvalidMetricsPath(t *testing.T) {
+	for _, metricsPath := range []string{"/{", "/", "metrics", "/metrics?tenant=user"} {
+		t.Run(metricsPath, func(t *testing.T) {
+			_, err := newConfig(configOpts{MetricsEnabled: true, MetricsPath: metricsPath})
+			if err == nil {
+				t.Fatalf("newConfig() with metrics path %q returned nil error", metricsPath)
+			}
+		})
 	}
 }
 

@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"slackbot.arpa/bot/aichat"
 	"slackbot.arpa/bot/chat"
 	"slackbot.arpa/bot/http"
+	botmetrics "slackbot.arpa/bot/metrics"
 	"slackbot.arpa/bot/showerthought"
 	"slackbot.arpa/bot/slack"
 	"slackbot.arpa/bot/user"
@@ -88,6 +90,8 @@ func (l BuildOpts) MakeConfig(cmd *cli.Command) (Config, error) {
 		UserNotifyChannel:             cmd.String("slack-user-notify-channel"),
 		SlackEventsPath:               cmd.String("slack-events-path"),
 		SlackEventDeduplicationWindow: cmd.Duration("slack-event-deduplication-window"),
+		MetricsEnabled:                cmd.Bool("metrics-enabled"),
+		MetricsPath:                   cmd.String("metrics-path"),
 		ConfigFile:                    cmd.String("config-file"),
 		PersonasConfig:                cmd.String("personas-config"),
 		PersonasStickyDuration:        cmd.Duration("personas-sticky-duration"),
@@ -114,6 +118,8 @@ type configOpts struct {
 	UserNotifyChannel             string
 	SlackEventsPath               string
 	SlackEventDeduplicationWindow time.Duration
+	MetricsEnabled                bool
+	MetricsPath                   string
 	ConfigFile                    string
 	// AI Chat Personas Configuration
 	PersonasConfig         string
@@ -156,6 +162,18 @@ type Config struct {
 }
 
 func newConfig(opts configOpts) (Config, error) {
+	metricsPath := valueOrDefault(opts.MetricsPath, botmetrics.DefaultPath)
+	parsedMetricsPath, metricsPathErr := url.ParseRequestURI(metricsPath)
+	if metricsPathErr != nil || !strings.HasPrefix(metricsPath, "/") || metricsPath == "/" ||
+		parsedMetricsPath.RawQuery != "" || parsedMetricsPath.Fragment != "" ||
+		strings.ContainsAny(metricsPath, "{} \t\r\n") {
+		return Config{}, fmt.Errorf("metrics path must be a valid absolute non-root HTTP path")
+	}
+	slackEventsPath := valueOrDefault(opts.SlackEventsPath, "/api/slack/events")
+	if opts.MetricsEnabled && (metricsPath == slackEventsPath || slices.Contains([]string{"/health", "/healthz", "/ready"}, metricsPath)) {
+		return Config{}, fmt.Errorf("metrics path conflicts with an existing HTTP endpoint: %s", metricsPath)
+	}
+
 	dataDir := opts.DataDir
 	showerthoughtStart, showerthoughtEnd := opts.ShowerthoughtBusinessHoursStart, opts.ShowerthoughtBusinessHoursEnd
 	if showerthoughtStart < 0 || showerthoughtStart > 23 || showerthoughtEnd < 1 || showerthoughtEnd > 24 || showerthoughtStart >= showerthoughtEnd {
@@ -201,6 +219,10 @@ func newConfig(opts configOpts) (Config, error) {
 			SlackEventPath: opts.SlackEventsPath,
 			SlackEventDeduplicationWindow: Default(
 				opts.SlackEventDeduplicationWindow, http.DefaultSlackEventDeduplicationWindow),
+			Metrics: botmetrics.Config{
+				Enabled: opts.MetricsEnabled,
+				Path:    metricsPath,
+			},
 		},
 		Slack: slack.Config{
 			Token:             opts.SlackToken,

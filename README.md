@@ -16,6 +16,7 @@ Workplace utilities for Slack.
 - Post an AI-generated shower thought during configured weekday hours.
 - Send messages, invite users, or delete bot messages from the CLI.
 - Expose health checks at `/health`, `/healthz`, and `/ready`.
+- Optionally expose Prometheus operational metrics.
 
 ## Setup
 
@@ -66,6 +67,8 @@ Useful settings:
 | `SLACK_EVENT_DEDUPLICATION_WINDOW` | `5m`                | Slack event retry retention window |
 | `OPENAI_MODEL`                     | application default | AI model                           |
 | `OPENAI_REASONING_EFFORT`          | application default | Model reasoning effort             |
+| `METRICS_ENABLED`                  | `false`             | Expose Prometheus metrics          |
+| `METRICS_PATH`                     | `/metrics`          | Prometheus endpoint path           |
 
 The Slack Events endpoint accepts only `POST` requests and limits request bodies to 1 MiB. Slack
 signature verification uses the original request bytes before JSON parsing. Each registered event
@@ -78,6 +81,13 @@ window. The cache retains at most 10,000 IDs; events without a
 usable ID are dispatched normally. Graceful shutdown drains processor queues until the shutdown
 deadline and logs any work that remains.
 
+Prometheus metrics are disabled by default. Enable them with `metrics.enabled: true` in `config.yaml`
+or `METRICS_ENABLED=true`; use `metrics.path` or `METRICS_PATH` to change the endpoint. Metrics cover
+HTTP outcomes, Slack retry deduplication, processor queue depth and overflow, Slack/OpenAI latency and
+errors, OpenAI token usage when reported by the API, and vibecheck outcomes. Labels contain only
+bounded operation, processor, status, and outcome values—never IDs, messages, or prompts. Metrics are
+in-process and do not require or affect a Prometheus server, health, or readiness.
+
 `/ready` returns `503` until initial configuration, Slack authentication, configured feature workers,
 and the HTTP listener have started. These are the required dependencies for the selected
 configuration. Optional user monitoring, AI chat, and shower thoughts are not readiness prerequisites
@@ -89,10 +99,10 @@ The configuration file is watched and valid updates are applied in order. Invali
 context limits, invalid shower-thought hours, and invalid deduplication windows are rejected; the last
 valid configuration remains active.
 
-| Reload behavior       | Settings                                                                                                                                                       |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Applied while running | `user.notify_channel`, `chat.*`, `vibecheck.*`, `aichat.*` (including personas and enable/disable), and `showerthought.*` (including enable/disable and hours) |
-| Restart required      | Log level/environment, data/config paths, HTTP port/event path/deduplication window, Slack credentials/preferences, and OpenAI API key/model/reasoning effort  |
+| Reload behavior       | Settings                                                                                                                                                                        |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Applied while running | `user.notify_channel`, `chat.*`, `vibecheck.*`, `aichat.*` (including personas and enable/disable), and `showerthought.*` (including enable/disable and hours)                  |
+| Restart required      | Log level/environment, data/config paths, HTTP port/event path/deduplication window, metrics settings, Slack credentials/preferences, and OpenAI API key/model/reasoning effort |
 
 Environment variables and CLI flags are read only at startup. A config-file update that changes a
 restart-required setting emits one warning naming every such setting. AI chat and shower thoughts can

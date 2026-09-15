@@ -15,6 +15,7 @@ import (
 	"slackbot.arpa/bot/chat"
 	"slackbot.arpa/bot/config"
 	"slackbot.arpa/bot/http"
+	botmetrics "slackbot.arpa/bot/metrics"
 	"slackbot.arpa/bot/showerthought"
 	"slackbot.arpa/bot/slack"
 	"slackbot.arpa/bot/user"
@@ -40,6 +41,7 @@ type Bot struct {
 	ai            *ai.AI
 	aichat        *aichat.AIChat
 	showerThought *showerthought.ShowerThought
+	metrics       *botmetrics.Metrics
 
 	lifecycleMu     sync.Mutex
 	shutdownSteps   []shutdownStep
@@ -131,8 +133,12 @@ func (s *Bot) Setup(ctx context.Context, cmd *cli.Command) (_ context.Context, s
 	}
 	s.log = s.logger.Get()
 
+	if currentConfig.Server.Metrics.Enabled {
+		s.metrics = botmetrics.New()
+	}
+
 	// Initialize services with live config
-	s.slack = slack.NewSlack(s.log, s.configManager.GetSlackConfig())
+	s.slack = slack.NewSlack(s.log, s.configManager.GetSlackConfig(), s.metrics)
 	if err := s.slack.Setup(ctx); err != nil {
 		return ctx, fmt.Errorf("setup slack service: %w", err)
 	}
@@ -150,7 +156,7 @@ func (s *Bot) Setup(ctx context.Context, cmd *cli.Command) (_ context.Context, s
 		return ctx, err
 	}
 
-	s.http = http.NewServer(s.log, s.configManager.GetHTTPConfig(), s.slack)
+	s.http = http.NewServer(s.log, s.configManager.GetHTTPConfig(), s.slack, s.metrics)
 	if err := s.addShutdownStep("shutdown http server", s.http.Shutdown); err != nil {
 		return ctx, err
 	}
@@ -177,7 +183,7 @@ func (s *Bot) initializeServices(ctx context.Context) error {
 	// Keep the service running so configuration reloads can enable it and existing bans
 	// can still expire while new vibechecks are disabled.
 	vibecheckConfig := s.configManager.GetVibecheckConfig()
-	vibecheckService, err := vibecheck.NewVibecheck(s.log, vibecheckConfig, s.slack.Client())
+	vibecheckService, err := vibecheck.NewVibecheck(s.log, vibecheckConfig, s.slack.Client(), s.metrics)
 	if err != nil {
 		return fmt.Errorf("initialize vibecheck: %w", err)
 	}
@@ -190,7 +196,7 @@ func (s *Bot) initializeServices(ctx context.Context) error {
 	// Only initialize AI services if OpenAI API key is provided
 	aiConfig := s.configManager.GetAIConfig()
 	if aiConfig.OpenAIAPIKey != "" {
-		s.ai = ai.NewAI(s.log, aiConfig)
+		s.ai = ai.NewAI(s.log, aiConfig, s.metrics)
 		if err := s.addShutdownStep("stop ai", s.ai.Stop); err != nil {
 			return err
 		}

@@ -25,7 +25,7 @@ type slackEventPendingReporter interface {
 }
 
 func (h *Server) RegisterEventProcessor(processor slackEventProcessor) {
-	dispatcher := newSlackEventDispatcher(h.log, processor)
+	dispatcher := newSlackEventDispatcher(h.log, processor, h.metrics)
 
 	h.dispatchMu.Lock()
 	defer h.dispatchMu.Unlock()
@@ -122,6 +122,9 @@ func (h *Server) handleSlackEvents(w http.ResponseWriter, r *http.Request) {
 		return h.dispatchSlackEvent(eventsAPIEvent)
 	})
 	if duplicate {
+		if h.metrics != nil {
+			h.metrics.IncDeduplicatedEvent()
+		}
 		h.log.Debug("Ignoring duplicate Slack event", zap.String("event_id", eventID))
 		w.WriteHeader(http.StatusOK)
 		return
@@ -163,6 +166,9 @@ func (h *Server) dispatchSlackEvent(event slackevents.EventsAPIEvent) bool {
 		zap.Any("innerEvent", event.InnerEvent.Type))
 	for _, dispatcher := range h.slackEventProcessors {
 		if !dispatcher.enqueue(event) {
+			if h.metrics != nil {
+				h.metrics.IncProcessorQueueOverflow(dispatcher.processor.ProcessorType())
+			}
 			h.log.Warn("Slack event processor queue full; dropping event",
 				zap.String("processor", dispatcher.processor.ProcessorType()),
 				zap.Int("queue_capacity", SlackEventQueueCapacity),

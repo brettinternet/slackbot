@@ -8,11 +8,13 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/tmc/langchaingo/httputil"
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/llms/openai"
 	"go.uber.org/zap"
+	botmetrics "slackbot.arpa/bot/metrics"
 )
 
 const (
@@ -29,12 +31,13 @@ type Config struct {
 }
 
 type AI struct {
-	log    *zap.Logger
-	config Config
-	llm    *openai.LLM
+	log     *zap.Logger
+	config  Config
+	llm     *openai.LLM
+	metrics *botmetrics.Metrics
 }
 
-func NewAI(log *zap.Logger, c Config) *AI {
+func NewAI(log *zap.Logger, c Config, metricSet ...*botmetrics.Metrics) *AI {
 	if c.Model == "" {
 		c.Model = DefaultModel
 	}
@@ -42,9 +45,14 @@ func NewAI(log *zap.Logger, c Config) *AI {
 		c.ReasoningEffort = DefaultReasoningEffort
 	}
 
+	var m *botmetrics.Metrics
+	if len(metricSet) > 0 {
+		m = metricSet[0]
+	}
 	return &AI{
-		log:    log,
-		config: c,
+		log:     log,
+		config:  c,
+		metrics: m,
 	}
 }
 
@@ -53,9 +61,10 @@ func (a *AI) Start(ctx context.Context) error {
 		openai.WithToken(a.config.OpenAIAPIKey),
 		openai.WithModel(a.config.Model),
 		openai.WithHTTPClient(&modelCompatibilityClient{
-			client: httputil.DefaultClient,
-			model:  a.config.Model,
-			effort: a.config.ReasoningEffort,
+			client:  httputil.DefaultClient,
+			model:   a.config.Model,
+			effort:  a.config.ReasoningEffort,
+			metrics: a.metrics,
 		}),
 	)
 	if err != nil {
@@ -78,15 +87,16 @@ type modelCompatibilityClient struct {
 	client interface {
 		Do(*http.Request) (*http.Response, error)
 	}
-	model  string
-	effort string
+	model   string
+	effort  string
+	metrics *botmetrics.Metrics
 }
 
 func (c *modelCompatibilityClient) Do(req *http.Request) (*http.Response, error) {
 	if req.Body == nil ||
 		!strings.HasSuffix(req.URL.Path, "/chat/completions") ||
 		!supportsReasoningEffort(c.model) {
-		return c.client.Do(req)
+		return c.send(req)
 	}
 
 	body, err := io.ReadAll(req.Body)
@@ -131,7 +141,46 @@ func (c *modelCompatibilityClient) Do(req *http.Request) (*http.Response, error)
 	clonedReq.GetBody = func() (io.ReadCloser, error) {
 		return io.NopCloser(bytes.NewReader(body)), nil
 	}
-	return c.client.Do(clonedReq)
+	return c.send(clonedReq)
+}
+
+func (c *modelCompatibilityClient) send(req *http.Request) (*http.Response, error) {
+	started := time.Now()
+	resp, err := c.client.Do(req)
+	if c.metrics == nil {
+		return resp, err
+	}
+	failed := err != nil || (resp != nil && resp.StatusCode >= http.StatusBadRequest)
+	c.metrics.ObserveExternalRequest("openai", started, failed)
+	if err == nil && resp != nil && resp.Body != nil && strings.HasSuffix(req.URL.Path, "/chat/completions") {
+		resp.Body = &tokenUsageReadCloser{ReadCloser: resp.Body, metrics: c.metrics}
+	}
+	return resp, err
+}
+
+type tokenUsageReadCloser struct {
+	io.ReadCloser
+	metrics *botmetrics.Metrics
+	body    bytes.Buffer
+}
+
+func (r *tokenUsageReadCloser) Read(p []byte) (int, error) {
+	n, err := r.ReadCloser.Read(p)
+	_, _ = r.body.Write(p[:n])
+	return n, err
+}
+
+func (r *tokenUsageReadCloser) Close() error {
+	var payload struct {
+		Usage struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+		} `json:"usage"`
+	}
+	if json.Unmarshal(r.body.Bytes(), &payload) == nil {
+		r.metrics.AddOpenAITokens(payload.Usage.PromptTokens, payload.Usage.CompletionTokens)
+	}
+	return r.ReadCloser.Close()
 }
 
 func supportsReasoningEffort(model string) bool {
