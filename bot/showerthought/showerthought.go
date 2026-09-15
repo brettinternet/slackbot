@@ -55,12 +55,15 @@ type Config struct {
 }
 
 type ShowerThought struct {
-	log    *zap.Logger
-	config Config
-	slack  slackService
-	ai     aiService
-	stopCh chan struct{}
-	stop   sync.Once
+	log      *zap.Logger
+	config   Config
+	configMu sync.RWMutex
+	slack    slackService
+	ai       aiService
+	stopCh   chan struct{}
+	wakeCh   chan struct{}
+	start    sync.Once
+	stop     sync.Once
 
 	historyMu sync.Mutex
 	history   []string
@@ -74,14 +77,36 @@ func New(log *zap.Logger, c Config, s slackService, a aiService) *ShowerThought 
 		slack:  s,
 		ai:     a,
 		stopCh: make(chan struct{}),
+		wakeCh: make(chan struct{}, 1),
 	}
 	st.loadHistory()
 	return st
 }
 
 func (st *ShowerThought) Start(ctx context.Context) error {
-	go st.run(ctx)
+	st.start.Do(func() { go st.run(ctx) })
 	return nil
+}
+
+// SetConfig atomically applies reloadable scheduler settings and wakes the worker
+// so enabling, disabling, channel changes, and schedule changes take effect now.
+func (st *ShowerThought) SetConfig(c Config) {
+	c.BusinessHoursStart, c.BusinessHoursEnd = normalizeBusinessHours(c.BusinessHoursStart, c.BusinessHoursEnd)
+	st.configMu.Lock()
+	// History storage is opened at construction and therefore remains restart-required.
+	c.DataDir = st.config.DataDir
+	st.config = c
+	st.configMu.Unlock()
+	select {
+	case st.wakeCh <- struct{}{}:
+	default:
+	}
+}
+
+func (st *ShowerThought) configSnapshot() Config {
+	st.configMu.RLock()
+	defer st.configMu.RUnlock()
+	return st.config
 }
 
 func (st *ShowerThought) Stop(_ context.Context) error {
@@ -91,7 +116,19 @@ func (st *ShowerThought) Stop(_ context.Context) error {
 
 func (st *ShowerThought) run(ctx context.Context) {
 	for {
-		next := st.nextPostTime()
+		config := st.configSnapshot()
+		if !config.Enabled || config.NotifyChannel == "" {
+			select {
+			case <-st.stopCh:
+				return
+			case <-ctx.Done():
+				return
+			case <-st.wakeCh:
+				continue
+			}
+		}
+
+		next := nextPostTime(config, time.Now())
 		st.log.Info("Next shower thought scheduled", zap.Time("at", next))
 		timer := time.NewTimer(time.Until(next))
 		select {
@@ -101,18 +138,20 @@ func (st *ShowerThought) run(ctx context.Context) {
 		case <-ctx.Done():
 			timer.Stop()
 			return
+		case <-st.wakeCh:
+			timer.Stop()
+			continue
 		case <-timer.C:
-			st.postShowerThought(ctx)
+			st.postShowerThoughtWithConfig(ctx, config)
 		}
 	}
 }
 
 // nextPostTime returns a random time within the configured business hours (Mon-Fri, local time)
 // within the next 7 days, at least 1 hour from now.
-func (st *ShowerThought) nextPostTime() time.Time {
-	now := time.Now()
-	start := st.config.BusinessHoursStart
-	end := st.config.BusinessHoursEnd
+func nextPostTime(config Config, now time.Time) time.Time {
+	start := config.BusinessHoursStart
+	end := config.BusinessHoursEnd
 
 	var candidates []time.Time
 	for d := range 7 {
@@ -154,12 +193,15 @@ A strong thought has a concrete observation, a fresh angle or unexpected connect
 Never use these anti-patterns: motivational or inspirational advice, tired "what if" hypotheticals, generic observations about Mondays/coffee/sleep, recycled internet jokes, insults, sexual content, politics, diagnoses, assumptions about someone's identity or private life, or filler such as "I was just thinking". Do not explain the joke.
 Output only one thought in 1–2 sentences, without a title, preamble, numbering, markdown, or quotation marks.`
 
-func (st *ShowerThought) postShowerThought(ctx context.Context) {
+func (st *ShowerThought) postShowerThoughtWithConfig(ctx context.Context, config Config) {
+	if !config.Enabled || config.NotifyChannel == "" {
+		return
+	}
 	target := ""
 	// The mention is supplied to the model as a placeholder so direct address is
 	// part of the thought rather than an unrelated prefix added after generation.
 	if random.Bool(0.40) {
-		target = st.randomChannelMember(ctx)
+		target = st.randomChannelMember(ctx, config.NotifyChannel)
 	}
 
 	var thought string
@@ -180,28 +222,32 @@ func (st *ShowerThought) postShowerThought(ctx context.Context) {
 		st.log.Error("Generated shower thought failed final validation", zap.Error(err))
 		return
 	}
+	latest := st.configSnapshot()
+	if !latest.Enabled || latest.NotifyChannel != config.NotifyChannel {
+		return
+	}
 
 	_, _, err = st.slack.Client().PostMessageContext(
 		ctx,
-		st.config.NotifyChannel,
+		config.NotifyChannel,
 		goslack.MsgOptionText(thought, false),
 		goslack.MsgOptionAsUser(true),
 	)
 	if err != nil {
 		st.log.Error("Failed to post shower thought",
-			zap.String("channel", st.config.NotifyChannel),
+			zap.String("channel", config.NotifyChannel),
 			zap.Error(err),
 		)
 		return
 	}
 	st.recordThought(thought)
-	st.log.Info("Posted shower thought", zap.String("channel", st.config.NotifyChannel))
+	st.log.Info("Posted shower thought", zap.String("channel", config.NotifyChannel))
 }
 
 // randomChannelMember returns a random non-bot member of the notify channel, or empty string on failure.
-func (st *ShowerThought) randomChannelMember(ctx context.Context) string {
+func (st *ShowerThought) randomChannelMember(ctx context.Context, channel string) string {
 	members, _, err := st.slack.Client().GetUsersInConversationContext(ctx,
-		&goslack.GetUsersInConversationParameters{ChannelID: st.config.NotifyChannel})
+		&goslack.GetUsersInConversationParameters{ChannelID: channel})
 	if err != nil {
 		st.log.Warn("Failed to fetch channel members for shower thought targeting", zap.Error(err))
 		return ""
@@ -403,10 +449,11 @@ func (st *ShowerThought) recentThoughts() []string {
 }
 
 func (st *ShowerThought) loadHistory() {
-	if st.config.DataDir == "" {
+	config := st.configSnapshot()
+	if config.DataDir == "" {
 		return
 	}
-	data, err := os.ReadFile(filepath.Join(st.config.DataDir, "showerthoughts.json")) // #nosec G304 -- configured data directory
+	data, err := os.ReadFile(filepath.Join(config.DataDir, "showerthoughts.json")) // #nosec G304 -- configured data directory
 	if err != nil {
 		return
 	}
@@ -426,16 +473,17 @@ func (st *ShowerThought) loadHistory() {
 }
 
 func (st *ShowerThought) recordThought(thought string) {
+	config := st.configSnapshot()
 	st.historyMu.Lock()
 	defer st.historyMu.Unlock()
 	st.history = append(st.history, thought)
 	if len(st.history) > maxRecentThoughts {
 		st.history = st.history[len(st.history)-maxRecentThoughts:]
 	}
-	if st.config.DataDir == "" {
+	if config.DataDir == "" {
 		return
 	}
-	if err := os.MkdirAll(st.config.DataDir, 0750); err != nil {
+	if err := os.MkdirAll(config.DataDir, 0750); err != nil {
 		st.log.Warn("Failed to create shower thought data directory", zap.Error(err))
 		return
 	}
@@ -444,7 +492,7 @@ func (st *ShowerThought) recordThought(thought string) {
 		st.log.Warn("Failed to encode shower thought history", zap.Error(err))
 		return
 	}
-	path := filepath.Join(st.config.DataDir, "showerthoughts.json")
+	path := filepath.Join(config.DataDir, "showerthoughts.json")
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0600); err != nil { // #nosec G304 -- configured data directory
 		st.log.Warn("Failed to write shower thought history", zap.Error(err))

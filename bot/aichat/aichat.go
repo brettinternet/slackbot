@@ -3,6 +3,7 @@ package aichat
 import (
 	"context"
 	"fmt"
+	"maps"
 	"regexp"
 	"sort"
 	"strconv"
@@ -81,6 +82,7 @@ type FileConfig struct {
 }
 
 type Config struct {
+	Enabled            bool
 	DataDir            string
 	Personas           map[string]string
 	StickyDuration     time.Duration
@@ -98,6 +100,7 @@ type personaAssignment struct {
 type AIChat struct {
 	log             *zap.Logger
 	config          Config
+	configMu        sync.RWMutex
 	slack           slackService
 	ai              aiService
 	context         *ContextStorage
@@ -109,6 +112,7 @@ type AIChat struct {
 	mutex           sync.Mutex
 	limiterMutex    sync.Mutex
 	channelLimiters map[string]*rate.Limiter
+	startOnce       sync.Once
 	stopOnce        sync.Once
 	closeOnce       sync.Once
 	workers         sync.WaitGroup
@@ -139,6 +143,7 @@ func (a *AIChat) Metrics() Metrics {
 }
 
 func NewAIChat(log *zap.Logger, c Config, s slackService, a aiService) *AIChat {
+	c = cloneConfig(c)
 	contextStorage, err := NewContextStorage(c.DataDir)
 	if err != nil {
 		log.Error("Failed to initialize context storage", zap.Error(err))
@@ -167,13 +172,44 @@ func (c *AIChat) ProcessorType() string {
 }
 
 func (a *AIChat) Start(ctx context.Context) error {
-	a.isConnected.Store(true)
-	a.workers.Add(1)
-	go func() {
-		defer a.workers.Done()
-		a.handleEvents(ctx)
-	}()
+	a.startOnce.Do(func() {
+		a.isConnected.Store(true)
+		a.workers.Add(1)
+		go func() {
+			defer a.workers.Done()
+			a.handleEvents(ctx)
+		}()
+	})
 	return nil
+}
+
+// SetConfig atomically applies reloadable AI chat and persona settings.
+func (a *AIChat) SetConfig(c Config) {
+	a.configMu.Lock()
+	// Storage is opened at construction and therefore remains restart-required.
+	c.DataDir = a.config.DataDir
+	a.config = cloneConfig(c)
+	a.configMu.Unlock()
+
+	// A rate-limit mode change starts with fresh limiter state.
+	a.limiterMutex.Lock()
+	a.channelLimiters = make(map[string]*rate.Limiter)
+	a.limiterMutex.Unlock()
+}
+
+func (a *AIChat) configSnapshot() Config {
+	a.configMu.RLock()
+	defer a.configMu.RUnlock()
+	return cloneConfig(a.config)
+}
+
+func cloneConfig(c Config) Config {
+	c.Personas = maps.Clone(c.Personas)
+	return c
+}
+
+func (a *AIChat) enabled() bool {
+	return a.configSnapshot().Enabled
 }
 
 func (a *AIChat) Stop(ctx context.Context) error {
@@ -202,7 +238,7 @@ func (a *AIChat) Stop(ctx context.Context) error {
 
 // PushEvent adds an event to be processed by the AIChat feature
 func (a *AIChat) PushEvent(event slackevents.EventsAPIEvent) {
-	if !a.isConnected.Load() {
+	if !a.isConnected.Load() || !a.enabled() {
 		return
 	}
 
@@ -347,6 +383,10 @@ func (a *AIChat) processEventSafely(ctx context.Context, event slackevents.Event
 
 // processEvent handles a single Slack event
 func (a *AIChat) processEvent(ctx context.Context, event slackevents.EventsAPIEvent) {
+	config := a.configSnapshot()
+	if !config.Enabled {
+		return
+	}
 	switch event.Type {
 	case slackevents.CallbackEvent:
 		innerEvent := event.InnerEvent
@@ -383,7 +423,7 @@ func (a *AIChat) processEvent(ctx context.Context, event slackevents.EventsAPIEv
 			}
 			// Direct mentions bypass rate limit and drop chance, like AppMentionEvent.
 			if !a.isBotMentioned(ev.Text) {
-				if a.config.RateLimitEnabled && !a.allowChannelEvent(ev.Channel) {
+				if config.RateLimitEnabled && !a.allowChannelEvent(ev.Channel) {
 					a.log.Debug("Rate limit exceeded, dropping event",
 						zap.String("user", ev.User),
 						zap.String("channel", ev.Channel),
@@ -483,7 +523,7 @@ func (a *AIChat) fetchChannelContext(ctx context.Context, channelID, triggeringT
 		return nil
 	}
 
-	maxAge := a.config.MaxContextAge
+	maxAge := a.configSnapshot().MaxContextAge
 	if maxAge == 0 {
 		maxAge = 2 * time.Hour
 	}
@@ -568,8 +608,9 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 	} else {
 		liveContext = a.fetchChannelContext(ctx, m.Channel, m.TimeStamp)
 	}
+	config := a.configSnapshot()
 	if shouldLoadStoredContext(len(liveContext)) && a.context != nil {
-		recentContext, err = a.context.GetRecentContext(m.UserID, scope, &a.config)
+		recentContext, err = a.context.GetRecentContext(m.UserID, scope, &config)
 		if err != nil {
 			a.log.Warn("Failed to retrieve conversation context",
 				zap.String("user", m.UserID), zap.String("channel", m.Channel), zap.Error(err))
@@ -578,7 +619,7 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 
 	if len(liveContext) > 0 {
 		if a.userNames == nil {
-			a.userNames = newUserNameResolver(a.config.DataDir, a.slack.Client(), a.log)
+			a.userNames = newUserNameResolver(config.DataDir, a.slack.Client(), a.log)
 		}
 		for i := range liveContext {
 			if !liveContext[i].IsBot && liveContext[i].SenderID != "" {
@@ -623,6 +664,10 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 		return
 	}
 
+	// Disabling AI chat while a generation is in flight must suppress its side effect.
+	if !a.enabled() {
+		return
+	}
 	msgOptions := []slack.MsgOption{
 		slack.MsgOptionText(completion, false),
 		slack.MsgOptionAsUser(true),
@@ -700,6 +745,7 @@ func conversationScope(channelID, threadTS string) string {
 // userPersona assigns one persona to a channel or thread and keeps it stable while
 // that conversation remains active, including across process restarts.
 func (a *AIChat) userPersona(scope string) string {
+	config := a.configSnapshot()
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
 	now := time.Now()
@@ -711,7 +757,8 @@ func (a *AIChat) userPersona(scope string) string {
 			a.log.Warn("Failed to retrieve persona assignment", zap.String("scope", scope), zap.Error(err))
 		}
 	}
-	if ok && (a.config.StickyDuration <= 0 || now.Sub(assignment.Timestamp) < a.config.StickyDuration) {
+	_, personaStillConfigured := config.Personas[assignment.Name]
+	if ok && personaStillConfigured && (config.StickyDuration <= 0 || now.Sub(assignment.Timestamp) < config.StickyDuration) {
 		assignment.Timestamp = now
 		a.stickyPersonas[scope] = assignment
 		a.storePersonaAssignment(scope, assignment)
@@ -735,13 +782,14 @@ func (a *AIChat) storePersonaAssignment(scope string, assignment personaAssignme
 
 // randomPersonaName returns a random persona name from the configured personas
 func (a *AIChat) randomPersonaName() string {
-	if len(a.config.Personas) == 0 {
+	config := a.configSnapshot()
+	if len(config.Personas) == 0 {
 		// Fallback to default persona if no personas configured
 		return "default"
 	}
 
-	personaNames := make([]string, 0, len(a.config.Personas))
-	for name := range a.config.Personas {
+	personaNames := make([]string, 0, len(config.Personas))
+	for name := range config.Personas {
 		personaNames = append(personaNames, name)
 	}
 
@@ -823,12 +871,13 @@ func selectContextTurns(turns []contextTurn, maxMessages, maxTokens int) []conte
 }
 
 func (a *AIChat) buildMessages(input string, u UserDetails, personaName string, storedContext []ConversationContext, liveContext []slackContextMessage) []llms.MessageContent {
+	config := a.configSnapshot()
 	// Live Slack history is authoritative for an active channel/thread. Stored
 	// memory is only a fallback, preventing duplicate turns and temporal inversion.
 	if len(liveContext) > 0 {
 		storedContext = nil
 	}
-	persona := a.config.Personas[personaName]
+	persona := config.Personas[personaName]
 	if persona == "" {
 		persona = personas[personaName]
 	}
@@ -885,7 +934,7 @@ func (a *AIChat) buildMessages(input string, u UserDetails, personaName string, 
 		}
 		turns = append(turns, contextTurn{role: role, text: text, timestamp: ctx.Timestamp, order: len(turns)})
 	}
-	selected := selectContextTurns(turns, a.config.MaxContextMessages, a.config.MaxContextTokens)
+	selected := selectContextTurns(turns, config.MaxContextMessages, config.MaxContextTokens)
 	guidance := ""
 	if len(selected) > 0 {
 		guidance += "\nConversation is active; respond to the current message and build on relevant context."
@@ -1029,9 +1078,10 @@ func generationOptions(temperature float64, maxTokens int) []llms.CallOption {
 // calculateDropChance determines the probability of dropping a message based on engagement factors
 func (a *AIChat) calculateDropChance(userID, channelID, text string) float64 {
 	baseDropChance := 0.25
+	config := a.configSnapshot()
 
 	if a.context != nil {
-		recentContext, err := a.context.GetRecentContext(userID, channelID, &a.config)
+		recentContext, err := a.context.GetRecentContext(userID, channelID, &config)
 		if err == nil && len(recentContext) > 0 {
 			var lastBotResponseTime time.Time
 			for i := len(recentContext) - 1; i >= 0; i-- {

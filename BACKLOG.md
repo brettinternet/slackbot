@@ -66,6 +66,8 @@ Acceptance criteria:
 
 ### SB-005: Define consistent configuration reload behavior
 
+Status: Complete
+
 Make each setting explicitly reloadable or restart-required.
 
 Acceptance criteria:

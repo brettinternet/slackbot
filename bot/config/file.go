@@ -25,11 +25,12 @@ import (
 
 // FileConfig represents the entire configuration file structure
 type FileConfig struct {
-	User          user.FileConfig          `json:"user" yaml:"user"`
-	Chat          chat.FileConfig          `json:"chat" yaml:"chat"`
-	Vibecheck     vibecheck.FileConfig     `json:"vibecheck" yaml:"vibecheck"`
-	AIChat        aichat.FileConfig        `json:"aichat" yaml:"aichat"`
-	ShowerThought showerthought.FileConfig `json:"showerthought" yaml:"showerthought"`
+	SlackEventDeduplicationWindow *time.Duration           `json:"slack_event_deduplication_window" yaml:"slack_event_deduplication_window"`
+	User                          user.FileConfig          `json:"user" yaml:"user"`
+	Chat                          chat.FileConfig          `json:"chat" yaml:"chat"`
+	Vibecheck                     vibecheck.FileConfig     `json:"vibecheck" yaml:"vibecheck"`
+	AIChat                        aichat.FileConfig        `json:"aichat" yaml:"aichat"`
+	ShowerThought                 showerthought.FileConfig `json:"showerthought" yaml:"showerthought"`
 }
 
 // ConfigWatcher watches a configuration file for changes and parses its content

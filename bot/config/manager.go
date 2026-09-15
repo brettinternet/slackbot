@@ -2,8 +2,10 @@ package config
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -165,15 +167,14 @@ func (cm *ConfigManager) rebuildMergedConfig() error {
 	if fileConfig == nil {
 		fileConfig = &FileConfig{}
 	}
-
-	opts := cm.mergeConfigs(fileConfig)
-
-	config, err := newConfig(opts)
-	if err != nil {
-		return fmt.Errorf("failed to build merged config: %w", err)
+	if err := validateFileConfig(fileConfig); err != nil {
+		return err
 	}
-
-	cm.mergedConfig.Store(&config)
+	config, err := cm.buildMergedConfig(fileConfig)
+	if err != nil {
+		return err
+	}
+	cm.mergedConfig.Store(config)
 	cm.log.Debug("Rebuilt merged configuration")
 	return nil
 }
@@ -193,7 +194,9 @@ func (cm *ConfigManager) mergeConfigs(fileConfig *FileConfig) configOpts {
 	opts.ServerPort = uint32WithOverride(4200, cm.cliOverrides.ServerPort)
 	opts.SlackEventsPath = stringWithOverride("/api/slack/events", cm.cliOverrides.SlackEventPath)
 	opts.SlackEventDeduplicationWindow = durationWithFileAndOverride(
-		nil, http.DefaultSlackEventDeduplicationWindow, cm.cliOverrides.SlackEventDeduplicationWindow)
+		fileConfig.SlackEventDeduplicationWindow,
+		http.DefaultSlackEventDeduplicationWindow,
+		cm.cliOverrides.SlackEventDeduplicationWindow)
 
 	opts.SlackToken = stringWithOverride("", cm.cliOverrides.SlackToken)
 	opts.SlackSigningSecret = stringWithOverride("", cm.cliOverrides.SlackSigningSecret)
@@ -247,12 +250,6 @@ func (cm *ConfigManager) mergeConfigs(fileConfig *FileConfig) configOpts {
 		showerthoughtConfig.BusinessHoursStart, 9, nil)
 	opts.ShowerthoughtBusinessHoursEnd = intWithFileAndOverride(
 		showerthoughtConfig.BusinessHoursEnd, 17, nil)
-	if opts.ShowerthoughtBusinessHoursStart < 0 || opts.ShowerthoughtBusinessHoursStart > 23 ||
-		opts.ShowerthoughtBusinessHoursEnd < 1 || opts.ShowerthoughtBusinessHoursEnd > 24 ||
-		opts.ShowerthoughtBusinessHoursStart >= opts.ShowerthoughtBusinessHoursEnd {
-		opts.ShowerthoughtBusinessHoursStart = 9
-		opts.ShowerthoughtBusinessHoursEnd = 17
-	}
 
 	return opts
 }
@@ -293,8 +290,8 @@ func (cm *ConfigManager) watchLoop() {
 				continue
 			}
 
-			// Handle write events (file modified)
-			if event.Op&fsnotify.Write == fsnotify.Write {
+			// Handle in-place writes and atomic replacement by editors/deploy tools.
+			if event.Op&(fsnotify.Write|fsnotify.Create) != 0 {
 				cm.handleConfigChange()
 			}
 
@@ -314,27 +311,101 @@ func (cm *ConfigManager) handleConfigChange() {
 	// Small delay to avoid partial write issues
 	time.Sleep(100 * time.Millisecond)
 
-	// Reload file config
-	if err := cm.loadFileConfig(); err != nil {
+	var fileConfig FileConfig
+	if err := ReadConfig(cm.configPath, &fileConfig); err != nil {
 		cm.log.Error("Failed to reload config file",
 			zap.String("path", cm.configPath),
 			zap.Error(err))
 		return
 	}
-
-	// Rebuild merged config
-	if err := cm.rebuildMergedConfig(); err != nil {
-		cm.log.Error("Failed to rebuild merged config", zap.Error(err))
+	if err := validateFileConfig(&fileConfig); err != nil {
+		cm.log.Error("Invalid configuration update; keeping last valid configuration",
+			zap.String("path", cm.configPath),
+			zap.Error(err))
 		return
 	}
 
-	// Notify subscribers
-	config := cm.mergedConfig.Load()
-	if config != nil {
-		cm.notifySubscribers(config)
+	merged, err := cm.buildMergedConfig(&fileConfig)
+	if err != nil {
+		cm.log.Error("Failed to rebuild merged config; keeping last valid configuration", zap.Error(err))
+		return
 	}
 
+	previous := cm.mergedConfig.Load()
+	cm.fileConfig.Store(&fileConfig)
+	cm.mergedConfig.Store(merged)
+	if changed := restartRequiredChanges(previous, merged); len(changed) > 0 {
+		cm.log.Warn("Configuration changes require a restart to take effect",
+			zap.Strings("settings", changed))
+	}
+	cm.notifySubscribers(merged)
 	cm.log.Info("Configuration reloaded successfully")
+}
+
+func (cm *ConfigManager) buildMergedConfig(fileConfig *FileConfig) (*Config, error) {
+	opts := cm.mergeConfigs(fileConfig)
+	merged, err := newConfig(opts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build merged config: %w", err)
+	}
+	return &merged, nil
+}
+
+func validateFileConfig(fileConfig *FileConfig) error {
+	aiChat := fileConfig.AIChat
+	if aiChat.StickyDuration != nil && *aiChat.StickyDuration < 0 {
+		return errors.New("aichat.sticky_duration must not be negative")
+	}
+	if aiChat.MaxContextMessages != nil && *aiChat.MaxContextMessages <= 0 {
+		return errors.New("aichat.max_context_messages must be positive")
+	}
+	if aiChat.MaxContextAge != nil && *aiChat.MaxContextAge <= 0 {
+		return errors.New("aichat.max_context_age must be positive")
+	}
+	if aiChat.MaxContextTokens != nil && *aiChat.MaxContextTokens <= 0 {
+		return errors.New("aichat.max_context_tokens must be positive")
+	}
+	start := intWithFileAndOverride(fileConfig.ShowerThought.BusinessHoursStart, 9, nil)
+	end := intWithFileAndOverride(fileConfig.ShowerThought.BusinessHoursEnd, 17, nil)
+	if start < 0 || start > 23 || end < 1 || end > 24 || start >= end {
+		return errors.New("showerthought business hours must satisfy 0 <= start < end <= 24")
+	}
+	if fileConfig.SlackEventDeduplicationWindow != nil && *fileConfig.SlackEventDeduplicationWindow <= 0 {
+		return errors.New("slack_event_deduplication_window must be positive")
+	}
+	return nil
+}
+
+func restartRequiredChanges(oldConfig, newConfig *Config) []string {
+	if oldConfig == nil || newConfig == nil {
+		return nil
+	}
+	var changed []string
+	if oldConfig.LogLevel != newConfig.LogLevel {
+		changed = append(changed, "log_level")
+	}
+	if oldConfig.Environment != newConfig.Environment {
+		changed = append(changed, "environment")
+	}
+	if oldConfig.DataDir != newConfig.DataDir {
+		changed = append(changed, "data_dir")
+	}
+	if oldConfig.Server.ServerPort != newConfig.Server.ServerPort {
+		changed = append(changed, "server.port")
+	}
+	if oldConfig.Server.SlackEventPath != newConfig.Server.SlackEventPath {
+		changed = append(changed, "server.slack_events_path")
+	}
+	if oldConfig.Server.SlackEventDeduplicationWindow != newConfig.Server.SlackEventDeduplicationWindow {
+		changed = append(changed, "slack_event_deduplication_window")
+	}
+	if !reflect.DeepEqual(oldConfig.Slack, newConfig.Slack) {
+		changed = append(changed, "slack")
+	}
+	if !reflect.DeepEqual(oldConfig.AI, newConfig.AI) {
+		changed = append(changed, "openai")
+	}
+	return changed
 }
 
 // notifySubscribers notifies all subscribers of config changes

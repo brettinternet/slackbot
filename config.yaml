@@ -1,19 +1,20 @@
 ---
-# Slack retries with the same event_id are dispatched only once during this window.
+# Restart required. Slack retries with the same event_id are dispatched only once during this window.
 slack_event_deduplication_window: 5m
 
-# Obituary/User notify service configuration
+# Reloadable Obituary/User notify service configuration.
 user:
   notify_channel: ""
 
-# Shower thought service configuration
-# Requires user.notify_channel and an OpenAI API key to be configured.
+# Reloadable shower thought service configuration.
+# Requires user.notify_channel and an OpenAI API key at process startup.
 showerthought:
   enabled: false
   business_hours_start: 8 # hour in 24h local time (inclusive)
   business_hours_end: 15 # hour in 24h local time (exclusive)
 
-# AI Chat service configuration
+# Reloadable AI Chat service configuration, including personas and enable/disable.
+# Requires an OpenAI API key at process startup.
 aichat:
   sticky_duration: 30m
   # Rate-limit non-mention messages. Set to false to let the bot respond to every message.
@@ -44,7 +45,7 @@ aichat:
       When appropriate, use playful skepticism about debugging mysteries, clearly labeling speculation.
       Return to evidence and practical next steps; never present conspiracies or guesses as facts.
 
-# Vibecheck service configuration
+# Reloadable Vibecheck service configuration.
 vibecheck:
   good_reactions: [ok]
   good_text: [V I B E C H E C K - P A S S E D]
@@ -52,7 +53,7 @@ vibecheck:
   bad_text: [V I B E C H E C K - F A I L E D]
   ban_duration: 5m
 
-# Chat responses service configuration
+# Reloadable Chat responses service configuration.
 chat:
   responses:
     - pattern: hello

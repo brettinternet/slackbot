@@ -116,6 +116,30 @@ func TestHistoryIsBoundedAndPersists(t *testing.T) {
 	}
 }
 
+func TestSetConfigEnablesDisablesAndReschedules(t *testing.T) {
+	st := New(zap.NewNop(), Config{Enabled: false}, nil, nil)
+	st.SetConfig(Config{
+		Enabled:            true,
+		NotifyChannel:      "C123",
+		BusinessHoursStart: 8,
+		BusinessHoursEnd:   16,
+	})
+	got := st.configSnapshot()
+	if !got.Enabled || got.NotifyChannel != "C123" || got.BusinessHoursStart != 8 || got.BusinessHoursEnd != 16 {
+		t.Fatalf("reloaded config = %#v", got)
+	}
+	select {
+	case <-st.wakeCh:
+	default:
+		t.Fatal("config reload did not wake scheduler")
+	}
+
+	st.SetConfig(Config{Enabled: false, BusinessHoursStart: 8, BusinessHoursEnd: 16})
+	if st.configSnapshot().Enabled {
+		t.Fatal("disabled config remained enabled")
+	}
+}
+
 func TestStopIsIdempotent(t *testing.T) {
 	st := New(zap.NewNop(), Config{}, nil, nil)
 	if err := st.Stop(context.Background()); err != nil {

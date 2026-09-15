@@ -55,6 +55,7 @@ func (b *blockingAI) GenerateContent(ctx context.Context, _ []llms.MessageConten
 
 func newTestAIChat(t *testing.T, cfg Config) *AIChat {
 	t.Helper()
+	cfg.Enabled = true
 	if cfg.StickyDuration == 0 {
 		cfg.StickyDuration = 30 * time.Minute
 	}
@@ -83,6 +84,29 @@ func newTestAIChatWithStorage(t *testing.T, cfg Config) (*AIChat, *ContextStorag
 	a.context = storage
 	t.Cleanup(func() { _ = storage.Close() })
 	return a, storage
+}
+
+func TestSetConfigEnablesDisablesAndReplacesPersonas(t *testing.T) {
+	a := newTestAIChat(t, Config{Personas: map[string]string{"old": "old prompt"}})
+	a.isConnected.Store(true)
+
+	a.SetConfig(Config{Enabled: false, Personas: map[string]string{"disabled": "prompt"}})
+	a.PushEvent(slackevents.EventsAPIEvent{})
+	if got := a.Metrics().QueueDepth; got != 0 {
+		t.Fatalf("disabled queue depth = %d, want 0", got)
+	}
+
+	personas := map[string]string{"new": "new prompt"}
+	a.SetConfig(Config{Enabled: true, Personas: personas, MaxContextMessages: 3})
+	personas["new"] = "mutated after reload"
+	a.PushEvent(slackevents.EventsAPIEvent{})
+	if got := a.Metrics().QueueDepth; got != 1 {
+		t.Fatalf("enabled queue depth = %d, want 1", got)
+	}
+	got := a.configSnapshot()
+	if got.Personas["new"] != "new prompt" || got.MaxContextMessages != 3 {
+		t.Fatalf("reloaded config = %#v", got)
+	}
 }
 
 func TestAIChatGenerationLatencyMetrics(t *testing.T) {

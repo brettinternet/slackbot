@@ -3,12 +3,101 @@ package config
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
+
+func TestConfigReloadPreservesLastValidConfigAndWarnsOnceForRestartSettings(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeConfig := func(contents string) {
+		t.Helper()
+		if err := os.WriteFile(configPath, []byte(contents), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeConfig(`
+slack_event_deduplication_window: 5m
+aichat:
+  max_context_messages: 10
+  personas:
+    original: original prompt
+showerthought:
+  enabled: false
+  business_hours_start: 9
+  business_hours_end: 17
+`)
+
+	core, logs := observer.New(zap.DebugLevel)
+	manager := &ConfigManager{
+		log:          zap.New(core),
+		cliOverrides: &CLIOverrides{},
+		buildOpts:    BuildOpts{BuildVersion: "test"},
+		configPath:   configPath,
+	}
+	if err := manager.loadFileConfig(); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.rebuildMergedConfig(); err != nil {
+		t.Fatal(err)
+	}
+	original := manager.GetConfig()
+
+	writeConfig(`
+aichat:
+  max_context_messages: 0
+  personas:
+    replacement: replacement prompt
+`)
+	manager.handleConfigChange()
+	if got := manager.GetConfig(); got != original {
+		t.Fatalf("invalid reload replaced config: %#v", got)
+	}
+	if got := manager.fileConfig.Load().AIChat.MaxContextMessages; got == nil || *got != 10 {
+		t.Fatalf("invalid reload replaced file config: %v", got)
+	}
+
+	var notifications int
+	manager.Subscribe(func(*Config) { notifications++ })
+	writeConfig(`
+slack_event_deduplication_window: 10m
+aichat:
+  max_context_messages: 20
+  personas:
+    replacement: replacement prompt
+showerthought:
+  enabled: true
+  business_hours_start: 8
+  business_hours_end: 16
+`)
+	manager.handleConfigChange()
+	got := manager.GetConfig()
+	if got == original || got.AIChat.MaxContextMessages != 20 || !got.ShowerThought.Enabled {
+		t.Fatalf("valid reload was not applied: %#v", got)
+	}
+	if got.Server.SlackEventDeduplicationWindow != 10*time.Minute {
+		t.Fatalf("deduplication window = %v, want 10m", got.Server.SlackEventDeduplicationWindow)
+	}
+	if notifications != 1 {
+		t.Fatalf("subscriber notifications = %d, want 1", notifications)
+	}
+	warnings := logs.FilterLevelExact(zap.WarnLevel).All()
+	if len(warnings) != 1 {
+		t.Fatalf("restart warnings = %d, want 1: %#v", len(warnings), warnings)
+	}
+	if warnings[0].Message != "Configuration changes require a restart to take effect" {
+		t.Fatalf("warning = %q", warnings[0].Message)
+	}
+	settings, ok := warnings[0].ContextMap()["settings"].([]any)
+	if !ok || len(settings) != 1 || settings[0] != "slack_event_deduplication_window" {
+		t.Fatalf("restart settings = %#v", warnings[0].ContextMap()["settings"])
+	}
+}
 
 func TestNotifySubscribersPreservesReloadOrder(t *testing.T) {
 	var versions []string

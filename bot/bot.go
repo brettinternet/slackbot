@@ -195,34 +195,22 @@ func (s *Bot) initializeServices(ctx context.Context) error {
 			return err
 		}
 
-		// Only initialize aichat service if there are personas configured
+		// Keep dynamic AI feature workers initialized exactly once. Their current
+		// configuration determines whether they accept work or schedule posts.
 		aichatConfig := s.configManager.GetAIChatConfig()
-		if len(aichatConfig.Personas) > 0 {
-			s.aichat = aichat.NewAIChat(s.log, aichatConfig, s.slack, s.ai)
-			if err := s.addShutdownStep("stop aichat", s.aichat.Stop); err != nil {
-				return err
-			}
-			personaKeys := make([]string, 0, len(aichatConfig.Personas))
-			for k := range aichatConfig.Personas {
-				personaKeys = append(personaKeys, k)
-			}
-			s.log.Info("AI Chat service initialized", zap.Strings("personas", personaKeys))
-		} else {
-			s.log.Info("AI Chat service disabled - no personas configured")
+		s.aichat = aichat.NewAIChat(s.log, aichatConfig, s.slack, s.ai)
+		if err := s.addShutdownStep("stop aichat", s.aichat.Stop); err != nil {
+			return err
 		}
+		s.log.Info("AI Chat service initialized", zap.Bool("enabled", len(aichatConfig.Personas) > 0))
 
-		// Only initialize showerthought if enabled and notify channel is set
 		stConfig := s.configManager.GetShowerthoughtConfig()
-		if stConfig.Enabled && stConfig.NotifyChannel != "" {
-			s.showerThought = showerthought.New(s.log, stConfig, s.slack, s.ai)
-			if err := s.addShutdownStep("stop showerthought", s.showerThought.Stop); err != nil {
-				return err
-			}
-			s.log.Info("Shower thought service initialized",
-				zap.String("channel", stConfig.NotifyChannel))
-		} else if stConfig.Enabled {
-			s.log.Warn("Shower thought service disabled - no notify channel configured")
+		s.showerThought = showerthought.New(s.log, stConfig, s.slack, s.ai)
+		if err := s.addShutdownStep("stop showerthought", s.showerThought.Stop); err != nil {
+			return err
 		}
+		s.log.Info("Shower thought service initialized",
+			zap.Bool("enabled", stConfig.Enabled && stConfig.NotifyChannel != ""))
 	} else {
 		s.log.Info("AI services disabled - no OpenAI API key provided")
 	}
@@ -233,22 +221,6 @@ func (s *Bot) initializeServices(ctx context.Context) error {
 // onConfigChange handles configuration changes and reconfigures services
 func (s *Bot) onConfigChange(newConfig *config.Config) {
 	s.log.Info("Configuration changed, updating services")
-
-	// Update logger if log level changed
-	if s.log != nil {
-		newLogger, err := logger.NewLogger(logger.LoggerOpts{
-			Level:        newConfig.LogLevel,
-			IsProduction: newConfig.Environment == config.EnvironmentProduction,
-			JSONConsole:  newConfig.Environment == config.EnvironmentProduction,
-		})
-		if err != nil {
-			s.log.Error("Failed to update logger with new config", zap.Error(err))
-		} else {
-			s.logger = newLogger
-			s.log = s.logger.Get()
-			s.log.Info("Logger updated with new configuration")
-		}
-	}
 
 	if s.chat != nil {
 		if err := s.chat.SetConfig(newConfig.Chat); err != nil {
@@ -268,10 +240,11 @@ func (s *Bot) onConfigChange(newConfig *config.Config) {
 		}
 	}
 
-	// Note: AI services may need restart for some changes (like API keys)
-	// For now, we'll just log the change
-	if s.ai != nil || s.aichat != nil {
-		s.log.Info("AI service configuration changed - may require restart for some changes")
+	if s.aichat != nil {
+		s.aichat.SetConfig(newConfig.AIChat)
+	}
+	if s.showerThought != nil {
+		s.showerThought.SetConfig(newConfig.ShowerThought)
 	}
 
 	s.log.Info("Service configuration update completed")

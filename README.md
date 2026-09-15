@@ -83,8 +83,19 @@ when disabled; the vibecheck maintenance worker still starts while new vibecheck
 existing bans can expire. Readiness changes to `503` immediately when shutdown begins. `/health` and
 `/healthz` report process health separately.
 
-Chat response changes in `config.yaml` reload while the bot runs. Restart after changing other feature
-settings.
+The configuration file is watched and valid updates are applied in order. Invalid YAML, invalid AI
+context limits, invalid shower-thought hours, and invalid deduplication windows are rejected; the last
+valid configuration remains active.
+
+| Reload behavior       | Settings                                                                                                                                                       |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Applied while running | `user.notify_channel`, `chat.*`, `vibecheck.*`, `aichat.*` (including personas and enable/disable), and `showerthought.*` (including enable/disable and hours) |
+| Restart required      | Log level/environment, data/config paths, HTTP port/event path/deduplication window, Slack credentials/preferences, and OpenAI API key/model/reasoning effort  |
+
+Environment variables and CLI flags are read only at startup. A config-file update that changes a
+restart-required setting emits one warning naming every such setting. AI chat and shower thoughts can
+be enabled at runtime only when the process started with an OpenAI API key; shower thoughts also need
+a non-empty `user.notify_channel`.
 
 ## Container
 

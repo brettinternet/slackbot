@@ -231,6 +231,7 @@ func newConfig(opts configOpts) (Config, error) {
 			ReasoningEffort: valueOrDefault(opts.OpenAIReasoningEffort, ai.DefaultReasoningEffort),
 		},
 		AIChat: aichat.Config{
+			Enabled:            len(personas) > 0,
 			DataDir:            dataDir,
 			Personas:           personas,
 			StickyDuration:     opts.PersonasStickyDuration,
