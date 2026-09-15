@@ -8,7 +8,9 @@ import (
 	"testing"
 
 	"github.com/slack-go/slack"
+	"github.com/slack-go/slack/slackevents"
 	"go.uber.org/zap"
+	botlogging "slackbot.arpa/bot/logging"
 )
 
 // mockSlackService implements slackService interface for testing
@@ -28,6 +30,21 @@ func (m *mockSlackService) OrgURL() string {
 
 // For testing purposes, we'll need to modify the UserWatch to accept interfaces
 // or use dependency injection. For now, we'll test the parts we can test directly.
+
+func TestUserWatchPreservesEventCorrelationInQueue(t *testing.T) {
+	watch := NewUserWatch(zap.NewNop(), Config{NotifyChannel: "C1234567890"}, &mockSlackService{})
+	event := slackevents.EventsAPIEvent{
+		InnerEvent: slackevents.EventsAPIInnerEvent{Type: "team_join"},
+		Data:       &slackevents.EventsAPICallbackEvent{EventID: "Ev-user-watch"},
+	}
+	if err := watch.PushEvent(event); err != nil {
+		t.Fatal(err)
+	}
+	queued := <-watch.eventCh
+	if got := botlogging.SlackEventID(queued); got != "Ev-user-watch" {
+		t.Fatalf("queued correlation = %q, want Ev-user-watch", got)
+	}
+}
 
 func TestNewUserWatch(t *testing.T) {
 	logger := zap.NewNop()
@@ -301,11 +318,11 @@ func TestLinkedinURL(t *testing.T) {
 
 func TestUserWatch_ValidateChannel_Format(t *testing.T) {
 	logger := zap.NewNop()
-	
+
 	tests := []struct {
-		name          string
-		channelID     string
-		expectedWarn  bool // Whether we expect a warning about format
+		name         string
+		channelID    string
+		expectedWarn bool // Whether we expect a warning about format
 	}{
 		{
 			name:         "valid channel ID format",
@@ -340,14 +357,14 @@ func TestUserWatch_ValidateChannel_Format(t *testing.T) {
 			}
 
 			watch := NewUserWatch(logger, config, mockSlack)
-			
+
 			// Test channel ID format validation logic (without API calls)
 			// We test the format validation part by checking the length and prefix
 			hasValidFormat := len(tt.channelID) >= 9 && strings.HasPrefix(tt.channelID, "C")
 			if hasValidFormat == tt.expectedWarn {
 				t.Errorf("Channel ID %v format validation unexpected result", tt.channelID)
 			}
-			
+
 			// Note: We skip the actual validateChannel call since it would require
 			// mocking the Slack API client, which is complex with the current architecture
 			_ = watch // Use the watch variable to avoid unused variable warning

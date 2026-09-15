@@ -9,6 +9,7 @@ import (
 
 	"github.com/slack-go/slack/slackevents"
 	"go.uber.org/zap"
+	botlogging "slackbot.arpa/bot/logging"
 )
 
 // SlackEventMaxBodyBytes is the largest Slack Events request body accepted by the server.
@@ -75,13 +76,15 @@ func (h *Server) handleSlackEvents(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusRequestEntityTooLarge)
 			return
 		}
-		h.log.Error("Failed to read Slack event request body", zap.Error(err))
+		h.log.Error("Failed to read Slack event request body",
+			botlogging.Operation("read_request_body"), zap.Error(err))
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
 	if err := h.slack.VerifyRequest(r.Header, body); err != nil {
-		h.log.Error("Failed to verify request.", zap.Error(err))
+		h.log.Error("Failed to verify request",
+			botlogging.Operation("verify_request"), zap.Error(err))
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
@@ -91,7 +94,8 @@ func (h *Server) handleSlackEvents(w http.ResponseWriter, r *http.Request) {
 		slackevents.OptionNoVerifyToken(),
 	)
 	if err != nil {
-		h.log.Warn("Failed to parse Slack event", zap.Error(err))
+		h.log.Warn("Failed to parse Slack event",
+			botlogging.Operation("parse_event"), zap.Error(err))
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -117,7 +121,8 @@ func (h *Server) handleSlackEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	eventID := slackEventID(eventsAPIEvent)
+	eventID := botlogging.SlackEventID(eventsAPIEvent)
+	eventLog := botlogging.ForSlackEvent(h.log, eventsAPIEvent)
 	duplicate, accepted := h.eventDeduplicator.accept(eventID, func() bool {
 		return h.dispatchSlackEvent(eventsAPIEvent)
 	})
@@ -125,7 +130,7 @@ func (h *Server) handleSlackEvents(w http.ResponseWriter, r *http.Request) {
 		if h.metrics != nil {
 			h.metrics.IncDeduplicatedEvent()
 		}
-		h.log.Debug("Ignoring duplicate Slack event", zap.String("event_id", eventID))
+		eventLog.Debug("Ignoring duplicate Slack event", botlogging.Operation("deduplicate_event"))
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -134,17 +139,6 @@ func (h *Server) handleSlackEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusOK)
-}
-
-func slackEventID(event slackevents.EventsAPIEvent) string {
-	switch data := event.Data.(type) {
-	case *slackevents.EventsAPICallbackEvent:
-		return data.EventID
-	case slackevents.EventsAPICallbackEvent:
-		return data.EventID
-	default:
-		return ""
-	}
 }
 
 func (h *Server) dispatchSlackEvent(event slackevents.EventsAPIEvent) bool {
@@ -161,15 +155,18 @@ func (h *Server) dispatchSlackEvent(event slackevents.EventsAPIEvent) bool {
 		return false
 	}
 
-	h.log.Debug("Received Slack event",
+	eventLog := botlogging.ForSlackEvent(h.log, event)
+	eventLog.Debug("Received Slack event",
+		botlogging.Operation("receive_event"),
 		zap.String("type", string(event.Type)),
-		zap.Any("innerEvent", event.InnerEvent.Type))
+		zap.String("inner_event_type", event.InnerEvent.Type))
 	for _, dispatcher := range h.slackEventProcessors {
 		if !dispatcher.enqueue(event) {
 			if h.metrics != nil {
 				h.metrics.IncProcessorQueueOverflow(dispatcher.processor.ProcessorType())
 			}
-			h.log.Warn("Slack event processor queue full; dropping event",
+			eventLog.Warn("Slack event processor queue full; dropping event",
+				botlogging.Operation("enqueue_event"),
 				zap.String("processor", dispatcher.processor.ProcessorType()),
 				zap.Int("queue_capacity", SlackEventQueueCapacity),
 				zap.String("overflow_policy", "drop_newest"))

@@ -132,6 +132,8 @@ Dependencies: SB-002, SB-003
 
 ### SB-009: Improve structured operational logging
 
+Status: Complete
+
 Make failures traceable across webhook receipt and feature processing.
 
 Acceptance criteria:

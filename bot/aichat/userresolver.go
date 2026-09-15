@@ -12,6 +12,7 @@ import (
 
 	"github.com/slack-go/slack"
 	"golang.org/x/sync/singleflight"
+	botlogging "slackbot.arpa/bot/logging"
 )
 
 type userNameResolver struct {
@@ -71,7 +72,8 @@ func (r *userNameResolver) resolve(ctx context.Context, userID string) string {
 		}
 		user, err := r.client.GetUserInfoContext(ctx, userID)
 		if err != nil {
-			r.log.Warn("Failed to resolve user name", zap.String("user", userID), zap.Error(err))
+			botlogging.FromContext(ctx, r.log).Warn("Failed to resolve user name",
+				botlogging.Operation("resolve_user_name"), zap.String("user", userID), zap.Error(err))
 			return "", err
 		}
 		name = firstNameFrom(user.Profile.RealName)

@@ -17,6 +17,7 @@ import (
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 	"go.uber.org/zap"
+	botlogging "slackbot.arpa/bot/logging"
 )
 
 const watchInterval = time.Minute
@@ -92,13 +93,14 @@ type UserWatch struct {
 	cancel          context.CancelFunc
 	workerDone      chan struct{}
 	started         bool
-	eventCh         chan struct{}
+	eventCh         chan slackevents.EventsAPIEvent
 	pendingEvents   atomic.Int64
 }
 
 // NewUserWatch accepts the Slack service while retaining compatibility with callers that
 // provide only the historical Client and OrgURL methods.
 func NewUserWatch(log *zap.Logger, c Config, s interface{ OrgURL() string }) *UserWatch {
+	log = botlogging.Component(log, "user-watch")
 	service := slackService(s)
 	var api userSlackAPI
 	if candidate, ok := s.(userSlackAPI); ok {
@@ -121,7 +123,7 @@ func NewUserWatch(log *zap.Logger, c Config, s interface{ OrgURL() string }) *Us
 		usersFile = filepath.Join(c.DataDir, "users.json")
 		stateFile = filepath.Join(c.DataDir, "user-watch-state.json")
 	}
-	return &UserWatch{log: log, slack: service, api: api, notifyChannel: c.NotifyChannel, knownUsers: make(map[string]*slack.User), usersFile: usersFile, stateFile: stateFile, eventCh: make(chan struct{}, 1)}
+	return &UserWatch{log: log, slack: service, api: api, notifyChannel: c.NotifyChannel, knownUsers: make(map[string]*slack.User), usersFile: usersFile, stateFile: stateFile, eventCh: make(chan slackevents.EventsAPIEvent, 1)}
 }
 
 func (o *UserWatch) Start(ctx context.Context) error {
@@ -335,13 +337,14 @@ func (o *UserWatch) worker(ctx context.Context, done chan struct{}) {
 			if o.isEnabled() {
 				o.retryPending(ctx)
 				if err := o.checkForUserChanges(ctx); err != nil {
-					o.log.Error("reconcile Slack users", zap.Error(err))
+					o.log.Error("reconcile Slack users", botlogging.Operation("reconcile_users"), zap.Error(err))
 				}
 			}
-		case <-o.eventCh:
+		case event := <-o.eventCh:
 			if o.isEnabled() {
 				if err := o.checkForUserChanges(ctx); err != nil {
-					o.log.Error("reconcile Slack users after event", zap.Error(err))
+					botlogging.ForSlackEvent(o.log, event).Error("reconcile Slack users after event",
+						botlogging.Operation("reconcile_users"), zap.Error(err))
 				}
 			}
 			o.pendingEvents.Add(-1)
@@ -358,7 +361,7 @@ func (o *UserWatch) PushEvent(event slackevents.EventsAPIEvent) error {
 	if event.InnerEvent.Type == "team_join" || event.InnerEvent.Type == "user_change" {
 		o.pendingEvents.Add(1)
 		select {
-		case o.eventCh <- struct{}{}:
+		case o.eventCh <- event:
 		default:
 			o.pendingEvents.Add(-1)
 		}

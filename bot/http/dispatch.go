@@ -6,6 +6,7 @@ import (
 
 	"github.com/slack-go/slack/slackevents"
 	"go.uber.org/zap"
+	botlogging "slackbot.arpa/bot/logging"
 	botmetrics "slackbot.arpa/bot/metrics"
 )
 
@@ -68,15 +69,18 @@ func (d *slackEventDispatcher) run() {
 }
 
 func (d *slackEventDispatcher) pushSafely(event slackevents.EventsAPIEvent) {
+	log := botlogging.ForSlackEvent(d.log, event)
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			d.log.Error("Slack event processor panicked",
+			log.Error("Slack event processor panicked",
+				botlogging.Operation("process_event"),
 				zap.String("processor", d.processor.ProcessorType()),
 				zap.Any("panic", recovered))
 		}
 	}()
 	if err := d.processor.PushEvent(event); err != nil {
-		d.log.Error("Slack event processor failed",
+		log.Error("Slack event processor failed",
+			botlogging.Operation("process_event"),
 			zap.String("processor", d.processor.ProcessorType()),
 			zap.Error(err))
 	}

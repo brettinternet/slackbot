@@ -9,6 +9,7 @@ import (
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestNewZapLogger(t *testing.T) {
@@ -285,6 +286,33 @@ func TestLoggerLevels(t *testing.T) {
 	}
 	if !strings.Contains(output, "error message") {
 		t.Errorf("Error message should appear with warn level")
+	}
+}
+
+func TestRedactingCoreExcludesSensitiveFields(t *testing.T) {
+	core, logs := observer.New(zap.DebugLevel)
+	log := zap.New(redactingCore{Core: core}).With(zap.String("token", "secret-token"))
+	log.Error("request failed",
+		zap.String("prompt", "private prompt"),
+		zap.String("slack_token", "secret Slack token"),
+		zap.String("apiKey", "secret API key"),
+		zap.String("request_body", "private body"),
+		zap.String("channel", "C123"),
+		zap.Error(io.ErrUnexpectedEOF),
+	)
+
+	entries := logs.All()
+	if len(entries) != 1 {
+		t.Fatalf("log count = %d, want 1", len(entries))
+	}
+	fields := entries[0].ContextMap()
+	for _, key := range []string{"token", "prompt", "slack_token", "apiKey", "request_body", "error"} {
+		if fields[key] != redactedValue {
+			t.Errorf("%s = %q, want redacted", key, fields[key])
+		}
+	}
+	if fields["channel"] != "C123" {
+		t.Errorf("channel = %q, want C123", fields["channel"])
 	}
 }
 

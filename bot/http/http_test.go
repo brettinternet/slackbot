@@ -19,6 +19,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
 	"go.uber.org/zap/zaptest/observer"
+	botlogging "slackbot.arpa/bot/logging"
 	botmetrics "slackbot.arpa/bot/metrics"
 )
 
@@ -454,6 +455,26 @@ func (p *failingEventProcessor) PushEvent(slackevents.EventsAPIEvent) error {
 }
 
 func (p *failingEventProcessor) ProcessorType() string { return "failing" }
+
+func TestProcessorFailureLogIncludesOperationalCorrelation(t *testing.T) {
+	core, logs := observer.New(zap.ErrorLevel)
+	dispatcher := newSlackEventDispatcher(
+		botlogging.Component(zap.New(core), "http"), &failingEventProcessor{},
+	)
+	dispatcher.pushSafely(slackevents.EventsAPIEvent{
+		Data: &slackevents.EventsAPICallbackEvent{EventID: "Ev-correlation"},
+	})
+
+	entries := logs.All()
+	if len(entries) != 1 {
+		t.Fatalf("error log count = %d, want 1", len(entries))
+	}
+	fields := entries[0].ContextMap()
+	if fields["component"] != "http" || fields["operation"] != "process_event" ||
+		fields[botlogging.CorrelationIDKey] != "Ev-correlation" || fields["processor"] != "failing" {
+		t.Fatalf("operational fields = %#v", fields)
+	}
+}
 
 type panickingEventProcessor struct {
 	calls atomic.Int64

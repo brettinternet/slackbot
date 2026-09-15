@@ -14,6 +14,7 @@ import (
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 	"go.uber.org/zap"
+	botlogging "slackbot.arpa/bot/logging"
 	botmetrics "slackbot.arpa/bot/metrics"
 	"slackbot.arpa/tools/random"
 )
@@ -155,6 +156,7 @@ type Vibecheck struct {
 }
 
 func NewVibecheck(log *zap.Logger, config Config, api slackAPI, metricSet ...*botmetrics.Metrics) (*Vibecheck, error) {
+	log = botlogging.Component(log, "vibecheck")
 	kickedUsers, err := newKickedUsersManager(log, config.DataDir)
 	if err != nil {
 		return nil, fmt.Errorf("initialize kicked users: %w", err)
@@ -264,8 +266,8 @@ func (c *Vibecheck) PushEvent(event slackevents.EventsAPIEvent) error {
 		return nil
 	}
 	if run.pending() >= eventQueueCapacity && run.queueFullLogged.CompareAndSwap(false, true) {
-		c.log.Warn("Vibecheck event queue is full; applying backpressure",
-			zap.Int("queue_capacity", eventQueueCapacity))
+		botlogging.ForSlackEvent(c.log, event).Warn("Vibecheck event queue is full; applying backpressure",
+			botlogging.Operation("enqueue_event"), zap.Int("queue_capacity", eventQueueCapacity))
 	}
 	run.enqueue(event)
 	return nil
@@ -298,18 +300,18 @@ func (c *Vibecheck) handleEvents(run *vibecheckRun) {
 }
 
 func (c *Vibecheck) processEvent(run *vibecheckRun, event slackevents.EventsAPIEvent) {
+	log := botlogging.ForSlackEvent(c.log, event)
 	switch ev := event.InnerEvent.Data.(type) {
 	case *slackevents.MessageEvent:
-		c.handleMessageEvent(run, ev)
+		c.handleMessageEvent(run, log, ev)
 	case *slackevents.MemberJoinedChannelEvent:
-		c.handleMemberJoinedEvent(run, ev)
+		c.handleMemberJoinedEvent(run, log, ev)
 	}
 }
 
-func (c *Vibecheck) handleMessageEvent(run *vibecheckRun, ev *slackevents.MessageEvent) {
-	message := strings.TrimSpace(ev.Text)
-	c.log.Debug("Processing message", zap.String("user", ev.User), zap.String("channel", ev.Channel),
-		zap.String("text", message), zap.String("type", c.ProcessorType()))
+func (c *Vibecheck) handleMessageEvent(run *vibecheckRun, log *zap.Logger, ev *slackevents.MessageEvent) {
+	log.Debug("Processing message", botlogging.Operation("process_message"),
+		zap.String("user", ev.User), zap.String("channel", ev.Channel), zap.String("type", c.ProcessorType()))
 	if c.dedupe.IsDupe(ev.User, ev.Channel, ev.TimeStamp) {
 		return
 	}
@@ -332,7 +334,8 @@ func (c *Vibecheck) handleMessageEvent(run *vibecheckRun, ev *slackevents.Messag
 		reaction = "ok"
 	}
 	if err := c.api.AddReactionContext(run.ctx, reaction, slack.NewRefToMessage(ev.Channel, ev.TimeStamp)); err != nil {
-		c.log.Error("Failed to add reaction", zap.String("channel", ev.Channel), zap.String("user", ev.User), zap.Error(err))
+		log.Error("Failed to add reaction", botlogging.Operation("add_reaction"),
+			zap.String("channel", ev.Channel), zap.String("user", ev.User), zap.Error(err))
 	}
 
 	options := []slack.MsgOption{slack.MsgOptionText(randomResponse(passed, config), false), slack.MsgOptionAsUser(true)}
@@ -340,7 +343,8 @@ func (c *Vibecheck) handleMessageEvent(run *vibecheckRun, ev *slackevents.Messag
 		options = append(options, slack.MsgOptionTS(ev.ThreadTimeStamp))
 	}
 	if _, _, err := c.api.PostMessageContext(run.ctx, ev.Channel, options...); err != nil {
-		c.log.Error("Failed to post response", zap.String("channel", ev.Channel), zap.Error(err))
+		log.Error("Failed to post response", botlogging.Operation("post_response"),
+			zap.String("channel", ev.Channel), zap.Error(err))
 	}
 
 	if passed || slices.Contains(config.PreferredUsers, ev.User) || slices.Contains(config.PreferredUsers, ev.Username) {
@@ -348,20 +352,20 @@ func (c *Vibecheck) handleMessageEvent(run *vibecheckRun, ev *slackevents.Messag
 	}
 	ban, err := c.kickedUsers.AddKickedUser(ev.User, ev.Channel, config.BanDuration)
 	if err != nil {
-		c.log.Error("Failed to persist ban; user will not be kicked", zap.String("channel", ev.Channel),
-			zap.String("user", ev.User), zap.Error(err))
+		log.Error("Failed to persist ban; user will not be kicked", botlogging.Operation("persist_ban"),
+			zap.String("channel", ev.Channel), zap.String("user", ev.User), zap.Error(err))
 		return
 	}
-	c.scheduleKick(run, c.kickDelay, ban, "low vibe")
+	c.scheduleKickWithLog(run, log, c.kickDelay, ban, "low vibe")
 }
 
-func (c *Vibecheck) handleMemberJoinedEvent(run *vibecheckRun, ev *slackevents.MemberJoinedChannelEvent) {
+func (c *Vibecheck) handleMemberJoinedEvent(run *vibecheckRun, log *zap.Logger, ev *slackevents.MemberJoinedChannelEvent) {
 	user, banned := c.kickedUsers.IsUserBanned(ev.User, ev.Channel)
 	if !banned {
 		return
 	}
 	timeRemaining := time.Until(user.ReinviteAt)
-	c.scheduleKick(run, c.rejoinKickDelay, user, "active ban")
+	c.scheduleKickWithLog(run, log, c.rejoinKickDelay, user, "active ban")
 
 	minutes := int(timeRemaining.Minutes())
 	seconds := int(timeRemaining.Seconds()) % 60
@@ -371,11 +375,18 @@ func (c *Vibecheck) handleMemberJoinedEvent(run *vibecheckRun, ev *slackevents.M
 	}
 	message := fmt.Sprintf("🚫 User is still banned for %s. Please wait before rejoining.", timeMessage)
 	if _, _, err := c.api.PostMessageContext(run.ctx, ev.Channel, slack.MsgOptionText(message, false), slack.MsgOptionAsUser(true)); err != nil {
-		c.log.Error("Failed to post ban time remaining message", zap.String("channel", ev.Channel), zap.Error(err))
+		log.Error("Failed to post ban time remaining message", botlogging.Operation("post_ban_status"),
+			zap.String("channel", ev.Channel), zap.Error(err))
 	}
 }
 
 func (c *Vibecheck) scheduleKick(run *vibecheckRun, delay time.Duration, ban kickedUser, reason string) {
+	c.scheduleKickWithLog(run, c.log, delay, ban, reason)
+}
+
+func (c *Vibecheck) scheduleKickWithLog(
+	run *vibecheckRun, log *zap.Logger, delay time.Duration, ban kickedUser, reason string,
+) {
 	if run.ctx.Err() != nil {
 		return
 	}
@@ -402,7 +413,7 @@ func (c *Vibecheck) scheduleKick(run *vibecheckRun, delay time.Duration, ban kic
 			err := c.api.KickUserFromConversationContext(attemptCtx, ban.ChannelID, ban.UserID)
 			cancel()
 			if err == nil {
-				c.log.Info("User kicked from channel", zap.String("channel", ban.ChannelID), zap.String("user", ban.UserID),
+				log.Info("User kicked from channel", zap.String("channel", ban.ChannelID), zap.String("user", ban.UserID),
 					zap.String("reason", reason), zap.Int("attempt", attempt))
 				return
 			}
@@ -410,11 +421,13 @@ func (c *Vibecheck) scheduleKick(run *vibecheckRun, delay time.Duration, ban kic
 				return
 			}
 			if attempt == c.maximumKickTries {
-				c.log.Error("Failed to kick user from channel", zap.String("channel", ban.ChannelID),
-					zap.String("user", ban.UserID), zap.Int("attempts", attempt), zap.Error(err))
+				log.Error("Failed to kick user from channel", botlogging.Operation("kick_user"),
+					zap.String("channel", ban.ChannelID), zap.String("user", ban.UserID),
+					zap.Int("attempts", attempt), zap.Error(err))
 				return
 			}
-			c.log.Warn("Kick failed; retrying", zap.String("channel", ban.ChannelID), zap.String("user", ban.UserID),
+			log.Warn("Kick failed; retrying", botlogging.Operation("kick_user"),
+				zap.String("channel", ban.ChannelID), zap.String("user", ban.UserID),
 				zap.Int("attempt", attempt), zap.Error(err))
 			timer.Reset(retryDelay)
 			select {

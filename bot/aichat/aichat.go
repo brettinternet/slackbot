@@ -17,6 +17,7 @@ import (
 	"github.com/tmc/langchaingo/llms"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
+	botlogging "slackbot.arpa/bot/logging"
 	"slackbot.arpa/tools/random"
 )
 
@@ -143,6 +144,7 @@ func (a *AIChat) Metrics() Metrics {
 }
 
 func NewAIChat(log *zap.Logger, c Config, s slackService, a aiService) *AIChat {
+	log = botlogging.Component(log, "aichat")
 	c = cloneConfig(c)
 	contextStorage, err := NewContextStorage(c.DataDir)
 	if err != nil {
@@ -250,7 +252,8 @@ func (a *AIChat) PushEvent(event slackevents.EventsAPIEvent) error {
 		a.queueDepth.Add(-1)
 		a.pendingEvents.Add(-1)
 		a.queueDrops.Add(1)
-		a.log.Warn("AIChat events channel full, dropping event.",
+		botlogging.ForSlackEvent(a.log, event).Warn("AIChat events channel full, dropping event",
+			botlogging.Operation("enqueue_event"),
 			zap.Int64("queue_depth", a.queueDepth.Load()),
 			zap.Uint64("queue_drops", a.queueDrops.Load()))
 	}
@@ -374,9 +377,12 @@ func (a *AIChat) isBotMentioned(text string) bool {
 }
 
 func (a *AIChat) processEventSafely(ctx context.Context, event slackevents.EventsAPIEvent) {
+	ctx = botlogging.WithSlackEvent(ctx, a.log, event)
+	log := botlogging.FromContext(ctx, a.log)
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			a.log.Error("AIChat event handler panicked", zap.Any("panic", recovered))
+			log.Error("AIChat event handler panicked",
+				botlogging.Operation("process_event"), zap.Any("panic", recovered))
 		}
 	}()
 	a.processEvent(ctx, event)
@@ -384,6 +390,7 @@ func (a *AIChat) processEventSafely(ctx context.Context, event slackevents.Event
 
 // processEvent handles a single Slack event
 func (a *AIChat) processEvent(ctx context.Context, event slackevents.EventsAPIEvent) {
+	log := botlogging.FromContext(ctx, botlogging.ForSlackEvent(a.log, event))
 	config := a.configSnapshot()
 	if !config.Enabled {
 		return
@@ -393,10 +400,10 @@ func (a *AIChat) processEvent(ctx context.Context, event slackevents.EventsAPIEv
 		innerEvent := event.InnerEvent
 		switch ev := innerEvent.Data.(type) {
 		case *slackevents.AppMentionEvent:
-			a.log.Debug("Processing AppMentionEvent (direct bot mention)",
+			log.Debug("Processing AppMentionEvent (direct bot mention)",
+				botlogging.Operation("process_event"),
 				zap.String("user", ev.User),
 				zap.String("channel", ev.Channel),
-				zap.String("text", ev.Text),
 				zap.String("type", a.ProcessorType()),
 			)
 			// Ignore bot messages to prevent loops
@@ -413,10 +420,10 @@ func (a *AIChat) processEvent(ctx context.Context, event slackevents.EventsAPIEv
 				DirectMention:   true,
 			})
 		case *slackevents.MessageEvent:
-			a.log.Debug("Processing MessageEvent",
+			log.Debug("Processing MessageEvent",
+				botlogging.Operation("process_event"),
 				zap.String("user", ev.User),
 				zap.String("channel", ev.Channel),
-				zap.String("text", ev.Text),
 				zap.String("type", a.ProcessorType()),
 			)
 			if ev.BotID != "" || ev.User == "" {
@@ -425,10 +432,10 @@ func (a *AIChat) processEvent(ctx context.Context, event slackevents.EventsAPIEv
 			// Direct mentions bypass rate limit and drop chance, like AppMentionEvent.
 			if !a.isBotMentioned(ev.Text) {
 				if config.RateLimitEnabled && !a.allowChannelEvent(ev.Channel) {
-					a.log.Debug("Rate limit exceeded, dropping event",
+					log.Debug("Rate limit exceeded, dropping event",
+						botlogging.Operation("rate_limit_event"),
 						zap.String("user", ev.User),
 						zap.String("channel", ev.Channel),
-						zap.String("text", ev.Text),
 						zap.String("type", a.ProcessorType()),
 					)
 					return
@@ -464,6 +471,7 @@ type eventMessage struct {
 // fetchThreadContext retrieves all messages in a Slack thread. The triggering
 // message is excluded by its exact Slack timestamp, never by list position.
 func (a *AIChat) fetchThreadContext(ctx context.Context, channelID, threadTS, triggeringTS string) []slackContextMessage {
+	log := botlogging.FromContext(ctx, a.log)
 	client := a.slack.Client()
 	if client == nil {
 		return nil
@@ -477,7 +485,8 @@ func (a *AIChat) fetchThreadContext(ctx context.Context, channelID, threadTS, tr
 	for {
 		page, hasMore, nextCursor, err := client.GetConversationRepliesContext(ctx, params)
 		if err != nil {
-			a.log.Warn("Failed to fetch thread context", zap.String("channel", channelID), zap.Error(err))
+			log.Warn("Failed to fetch thread context", botlogging.Operation("fetch_thread_context"),
+				zap.String("channel", channelID), zap.Error(err))
 			return nil
 		}
 		msgs = append(msgs, page...)
@@ -519,6 +528,7 @@ func (a *AIChat) fetchThreadContext(ctx context.Context, channelID, threadTS, tr
 // filter so stale context never reaches the LLM.
 // Returns messages in chronological order, excluding the triggering timestamp when present.
 func (a *AIChat) fetchChannelContext(ctx context.Context, channelID, triggeringTS string) []slackContextMessage {
+	log := botlogging.FromContext(ctx, a.log)
 	client := a.slack.Client()
 	if client == nil {
 		return nil
@@ -536,7 +546,8 @@ func (a *AIChat) fetchChannelContext(ctx context.Context, channelID, triggeringT
 		Limit:     16,
 	})
 	if err != nil {
-		a.log.Warn("Failed to fetch channel context", zap.String("channel", channelID), zap.Error(err))
+		log.Warn("Failed to fetch channel context", botlogging.Operation("fetch_channel_context"),
+			zap.String("channel", channelID), zap.Error(err))
 		return nil
 	}
 	msgs := history.Messages
@@ -566,12 +577,13 @@ func (a *AIChat) fetchChannelContext(ctx context.Context, channelID, triggeringT
 
 // handleMessageEvent processes a message event and generates a response
 func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
+	log := botlogging.FromContext(ctx, a.log)
 	eventMessage := strings.TrimSpace(m.Text)
 
-	a.log.Debug("Processing eventMessage",
+	log.Debug("Processing eventMessage",
+		botlogging.Operation("process_message"),
 		zap.String("user", m.UserID),
 		zap.String("channel", m.Channel),
-		zap.String("text", eventMessage),
 		zap.String("type", a.ProcessorType()),
 	)
 
@@ -582,10 +594,10 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 
 	user, err := a.slack.Client().GetUserInfo(m.UserID)
 	if err != nil {
-		a.log.Error("Failed to get user info",
+		log.Error("Failed to get user info",
+			botlogging.Operation("get_user_info"),
 			zap.String("user", m.UserID),
 			zap.String("channel", m.Channel),
-			zap.String("text", eventMessage),
 			zap.Error(err),
 		)
 	}
@@ -597,7 +609,7 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 	}
 
 	scope := conversationScope(m.Channel, m.ThreadTimeStamp)
-	personaName := a.userPersona(scope)
+	personaName := a.userPersonaWithLogger(log, scope)
 
 	// Prefer live Slack context because it has the actual channel chronology. Stored
 	// channel memory is a fallback for API failures or channels with no recent messages.
@@ -613,7 +625,8 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 	if shouldLoadStoredContext(len(liveContext)) && a.context != nil {
 		recentContext, err = a.context.GetRecentContext(m.UserID, scope, &config)
 		if err != nil {
-			a.log.Warn("Failed to retrieve conversation context",
+			log.Warn("Failed to retrieve conversation context",
+				botlogging.Operation("retrieve_conversation_context"),
 				zap.String("user", m.UserID), zap.String("channel", m.Channel), zap.Error(err))
 		}
 	}
@@ -634,9 +647,9 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 	resp, err := a.generateContent(ctx, messages,
 		generationOptions(profile.Temperature, profile.MaxTokens)...)
 	if err != nil {
-		a.log.Error("Failed to generate content",
-			zap.String("user", m.UserID), zap.String("channel", m.Channel),
-			zap.String("text", eventMessage), zap.Error(err))
+		log.Error("Failed to generate content",
+			botlogging.Operation("generate_content"),
+			zap.String("user", m.UserID), zap.String("channel", m.Channel), zap.Error(err))
 		if m.DirectMention {
 			a.postFallback(ctx, m)
 		}
@@ -644,7 +657,8 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 	}
 
 	if resp == nil || len(resp.Choices) == 0 || strings.TrimSpace(resp.Choices[0].Content) == "" {
-		a.log.Warn("Empty response from LLM", zap.String("user", m.UserID), zap.String("channel", m.Channel))
+		log.Warn("Empty response from LLM", botlogging.Operation("generate_content"),
+			zap.String("user", m.UserID), zap.String("channel", m.Channel))
 		if m.DirectMention {
 			a.postFallback(ctx, m)
 		}
@@ -685,7 +699,8 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 		msgOptions...,
 	)
 	if err != nil {
-		a.log.Error("Failed to post response",
+		log.Error("Failed to post response",
+			botlogging.Operation("post_response"),
 			zap.String("channel", m.Channel),
 			zap.Error(err),
 		)
@@ -706,7 +721,8 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 			Timestamp:   now,
 		}
 		if err := a.context.StoreContext(userContext); err != nil {
-			a.log.Warn("Failed to store user context",
+			log.Warn("Failed to store user context",
+				botlogging.Operation("store_user_context"),
 				zap.String("user", m.UserID),
 				zap.String("channel", m.Channel),
 				zap.Error(err),
@@ -723,7 +739,8 @@ func (a *AIChat) handleMessageEvent(ctx context.Context, m eventMessage) {
 			Timestamp:   now.Add(time.Millisecond), // Ensure ordering
 		}
 		if err := a.context.StoreContext(assistantContext); err != nil {
-			a.log.Warn("Failed to store assistant context",
+			log.Warn("Failed to store assistant context",
+				botlogging.Operation("store_assistant_context"),
 				zap.String("user", m.UserID),
 				zap.String("channel", m.Channel),
 				zap.Error(err),
@@ -746,6 +763,10 @@ func conversationScope(channelID, threadTS string) string {
 // userPersona assigns one persona to a channel or thread and keeps it stable while
 // that conversation remains active, including across process restarts.
 func (a *AIChat) userPersona(scope string) string {
+	return a.userPersonaWithLogger(a.log, scope)
+}
+
+func (a *AIChat) userPersonaWithLogger(log *zap.Logger, scope string) string {
 	config := a.configSnapshot()
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
@@ -755,29 +776,31 @@ func (a *AIChat) userPersona(scope string) string {
 		var err error
 		assignment, ok, err = a.context.GetPersonaAssignment(scope)
 		if err != nil {
-			a.log.Warn("Failed to retrieve persona assignment", zap.String("scope", scope), zap.Error(err))
+			log.Warn("Failed to retrieve persona assignment",
+				botlogging.Operation("retrieve_persona_assignment"), zap.String("scope", scope), zap.Error(err))
 		}
 	}
 	_, personaStillConfigured := config.Personas[assignment.Name]
 	if ok && personaStillConfigured && (config.StickyDuration <= 0 || now.Sub(assignment.Timestamp) < config.StickyDuration) {
 		assignment.Timestamp = now
 		a.stickyPersonas[scope] = assignment
-		a.storePersonaAssignment(scope, assignment)
+		a.storePersonaAssignment(log, scope, assignment)
 		return assignment.Name
 	}
 	personaName := a.randomPersonaName()
 	assignment = personaAssignment{Name: personaName, Timestamp: now}
 	a.stickyPersonas[scope] = assignment
-	a.storePersonaAssignment(scope, assignment)
+	a.storePersonaAssignment(log, scope, assignment)
 	return personaName
 }
 
-func (a *AIChat) storePersonaAssignment(scope string, assignment personaAssignment) {
+func (a *AIChat) storePersonaAssignment(log *zap.Logger, scope string, assignment personaAssignment) {
 	if a.context == nil {
 		return
 	}
 	if err := a.context.StorePersonaAssignment(scope, assignment); err != nil {
-		a.log.Warn("Failed to persist persona assignment", zap.String("scope", scope), zap.Error(err))
+		log.Warn("Failed to persist persona assignment",
+			botlogging.Operation("persist_persona_assignment"), zap.String("scope", scope), zap.Error(err))
 	}
 }
 
@@ -1048,7 +1071,8 @@ func (a *AIChat) reactToAcknowledgement(ctx context.Context, m eventMessage, rea
 		return
 	}
 	if err := a.slack.Client().AddReactionContext(ctx, reaction, slack.ItemRef{Channel: m.Channel, Timestamp: m.TimeStamp}); err != nil {
-		a.log.Debug("Failed to react to acknowledgement", zap.Error(err))
+		botlogging.FromContext(ctx, a.log).Debug("Failed to react to acknowledgement",
+			botlogging.Operation("add_acknowledgement_reaction"), zap.Error(err))
 	}
 }
 
@@ -1060,7 +1084,8 @@ func (a *AIChat) postFallback(ctx context.Context, m eventMessage) {
 		options = append(options, slack.MsgOptionTS(m.ThreadTimeStamp))
 	}
 	if _, _, err := a.slack.Client().PostMessageContext(ctx, m.Channel, options...); err != nil {
-		a.log.Error("Failed to post fallback response", zap.String("channel", m.Channel), zap.Error(err))
+		botlogging.FromContext(ctx, a.log).Error("Failed to post fallback response",
+			botlogging.Operation("post_fallback_response"), zap.String("channel", m.Channel), zap.Error(err))
 	}
 }
 

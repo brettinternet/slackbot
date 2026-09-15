@@ -2,6 +2,8 @@ package chat
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -9,7 +11,10 @@ import (
 	"github.com/slack-go/slack/slackevents"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
+	"go.uber.org/zap/zaptest/observer"
+	botlogging "slackbot.arpa/bot/logging"
 )
 
 type reactionCall struct {
@@ -192,6 +197,53 @@ func TestChatSupportsRandomOnlyAndDeprecatedMessage(t *testing.T) {
 			assert.Equal(t, tt.want, messages)
 		})
 	}
+}
+
+func TestChatLogsCorrelationWithoutMessageContent(t *testing.T) {
+	const sensitiveMessage = "private acquisition details"
+	core, logs := observer.New(zap.DebugLevel)
+	service := &mockSlackService{reactionErr: errors.New("reaction failed")}
+	chat, err := NewChat(zap.New(core), Config{Responses: []Response{{
+		Pattern: sensitiveMessage, Reactions: []string{"eyes"},
+	}}}, service)
+	require.NoError(t, err)
+	event := messageEvent("user1", sensitiveMessage, "123.456")
+	event.Data = &slackevents.EventsAPICallbackEvent{EventID: "Ev-chat"}
+
+	chat.processEvent(context.Background(), event)
+
+	entries := logs.All()
+	require.NotEmpty(t, entries)
+	for _, entry := range entries {
+		fields := entry.ContextMap()
+		require.NotContains(t, fmt.Sprint(fields), sensitiveMessage)
+		require.NotContains(t, fields, "text")
+		require.Equal(t, "chat", fields["component"])
+		require.Equal(t, "Ev-chat", fields[botlogging.CorrelationIDKey])
+	}
+	errorEntries := logs.FilterMessage("Failed to add reaction").All()
+	require.Len(t, errorEntries, 1)
+	require.Equal(t, "add_reaction", errorEntries[0].ContextMap()["operation"])
+}
+
+func TestChatQueueOverflowLogIsCorrelated(t *testing.T) {
+	core, logs := observer.New(zap.WarnLevel)
+	chat, err := NewChat(zap.New(core), Config{}, &mockSlackService{})
+	require.NoError(t, err)
+	chat.isConnected.Store(true)
+	for range eventChannelSize {
+		require.NoError(t, chat.PushEvent(slackevents.EventsAPIEvent{}))
+	}
+	event := slackevents.EventsAPIEvent{
+		Data: &slackevents.EventsAPICallbackEvent{EventID: "Ev-overflow"},
+	}
+	require.NoError(t, chat.PushEvent(event))
+
+	entries := logs.FilterMessage("Chat events channel full, dropping event").All()
+	require.Len(t, entries, 1)
+	fields := entries[0].ContextMap()
+	require.Equal(t, "Ev-overflow", fields[botlogging.CorrelationIDKey])
+	require.Equal(t, "enqueue_event", fields["operation"])
 }
 
 func TestChatDeduplicatesMessages(t *testing.T) {

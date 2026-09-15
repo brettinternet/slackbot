@@ -11,6 +11,7 @@ import (
 
 	"github.com/slack-go/slack/slackevents"
 	"go.uber.org/zap"
+	botlogging "slackbot.arpa/bot/logging"
 	"slackbot.arpa/tools/random"
 )
 
@@ -122,7 +123,7 @@ func NewChat(log *zap.Logger, cfg Config, service slackService) (*Chat, error) {
 	}
 
 	chat := &Chat{
-		log:      log,
+		log:      botlogging.Component(log, "chat"),
 		slack:    service,
 		eventsCh: make(chan slackevents.EventsAPIEvent, eventChannelSize),
 		dedupe:   newMessageDeduplicator(dedupeDuration),
@@ -191,7 +192,8 @@ func (c *Chat) PushEvent(event slackevents.EventsAPIEvent) error {
 	case c.eventsCh <- event:
 	default:
 		c.pending.Add(-1)
-		c.log.Warn("Chat events channel full, dropping event.")
+		botlogging.ForSlackEvent(c.log, event).Warn("Chat events channel full, dropping event",
+			botlogging.Operation("enqueue_event"))
 	}
 	return nil
 }
@@ -255,25 +257,26 @@ func (c *Chat) processEvent(ctx context.Context, event slackevents.EventsAPIEven
 		return
 	}
 
+	log := botlogging.ForSlackEvent(c.log, event)
 	if c.dedupe.isDuplicate(message.userID, message.channel, message.timestamp) {
-		c.log.Debug("Skipping duplicate chat message",
+		log.Debug("Skipping duplicate chat message",
 			zap.String("user", message.userID),
 			zap.String("channel", message.channel),
 			zap.String("timestamp", message.timestamp),
 		)
 		return
 	}
-	c.handleMessageEvent(ctx, message)
+	c.handleMessageEvent(ctx, log, message)
 }
 
 // handleMessageEvent responds to a message when it matches configured patterns.
-func (c *Chat) handleMessageEvent(ctx context.Context, event eventMessage) {
+func (c *Chat) handleMessageEvent(ctx context.Context, log *zap.Logger, event eventMessage) {
 	message := strings.TrimSpace(event.text)
 
-	c.log.Debug("Processing message",
+	log.Debug("Processing message",
+		botlogging.Operation("match_message"),
 		zap.String("user", event.userID),
 		zap.String("channel", event.channel),
-		zap.String("text", message),
 		zap.String("type", c.ProcessorType()),
 	)
 
@@ -289,14 +292,14 @@ func (c *Chat) handleMessageEvent(ctx context.Context, event eventMessage) {
 		}
 
 		matched = true
-		c.log.Info("Message matched pattern",
-			zap.String("pattern", response.pattern),
+		log.Info("Message matched configured pattern",
 			zap.String("channel", event.channel),
 		)
 
 		for _, reaction := range response.reactions {
 			if err := c.slack.AddReaction(ctx, reaction, event.channel, event.timestamp); err != nil {
-				c.log.Error("Failed to add reaction",
+				log.Error("Failed to add reaction",
+					botlogging.Operation("add_reaction"),
 					zap.String("channel", event.channel),
 					zap.String("user", event.userID),
 					zap.String("reaction", reaction),
@@ -317,7 +320,8 @@ func (c *Chat) handleMessageEvent(ctx context.Context, event eventMessage) {
 			if err := c.slack.PostMessage(
 				ctx, event.channel, responseMessage, event.threadTimestamp,
 			); err != nil {
-				c.log.Error("Failed to post response",
+				log.Error("Failed to post response",
+					botlogging.Operation("post_response"),
 					zap.String("channel", event.channel),
 					zap.Error(err),
 				)
@@ -326,8 +330,7 @@ func (c *Chat) handleMessageEvent(ctx context.Context, event eventMessage) {
 	}
 
 	if !matched {
-		c.log.Debug("No matching response found for message",
-			zap.String("text", message),
+		log.Debug("No matching response found for message",
 			zap.String("channel", event.channel),
 			zap.String("type", c.ProcessorType()),
 		)

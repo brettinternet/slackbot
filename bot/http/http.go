@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	botlogging "slackbot.arpa/bot/logging"
 	botmetrics "slackbot.arpa/bot/metrics"
 )
 
@@ -56,7 +57,7 @@ func NewServer(log *zap.Logger, config Config, slack slackService, metricSet ...
 		m = botmetrics.New()
 	}
 	h := &Server{
-		log:               log,
+		log:               botlogging.Component(log, "http"),
 		serveMux:          http.NewServeMux(),
 		config:            config,
 		slack:             slack,

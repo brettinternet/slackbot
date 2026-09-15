@@ -81,6 +81,11 @@ window. The cache retains at most 10,000 IDs; events without a
 usable ID are dispatched normally. Graceful shutdown drains processor queues until the shutdown
 deadline and logs any work that remains.
 
+Operational logs identify the component and operation for event-processing failures. Slack callback
+logs carry the event ID as `correlation_id` from receipt through feature processing when Slack provides
+one. Message bodies and prompts are not logged; fields named for common secrets or sensitive payloads,
+including errors that may embed upstream response bodies, are redacted by the application logger.
+
 Prometheus metrics are disabled by default. Enable them with `metrics.enabled: true` in `config.yaml`
 or `METRICS_ENABLED=true`; use `metrics.path` or `METRICS_PATH` to change the endpoint. Metrics cover
 HTTP outcomes, Slack retry deduplication, processor queue depth and overflow, Slack/OpenAI latency and

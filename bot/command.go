@@ -217,7 +217,7 @@ func sendMessage(ctx context.Context, cmd *cli.Command, s *Bot) error {
 		s.log.Info("Using specified channels", zap.Strings("channels", channels))
 	}
 
-	s.log.Info("Sending message to channels", zap.String("message", f.Message), zap.Strings("channels", channels))
+	s.log.Info("Sending message to channels", zap.Int("message_length", len(f.Message)), zap.Strings("channels", channels))
 
 	client := s.slack.Client()
 	if client == nil {
