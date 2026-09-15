@@ -49,7 +49,7 @@ func Flags() []cli.Flag {
 		&cli.StringFlag{
 			Name:    "data-dir",
 			Usage:   "Data storage directory, may be relative or absolute",
-			Value:   "./",
+			Value:   "./tmp",
 			Sources: cli.EnvVars("DATA_DIR"),
 			Validator: func(v string) error {
 				if err := validateDirectoryInput(v, 0755); err != nil {

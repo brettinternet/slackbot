@@ -61,7 +61,7 @@ Useful settings:
 | Setting                            | Default             | Purpose                            |
 | ---------------------------------- | ------------------- | ---------------------------------- |
 | `CONFIG_FILE`                      | `./config.yaml`     | YAML or JSON feature configuration |
-| `DATA_DIR`                         | `./`                | SQLite and user-state storage      |
+| `DATA_DIR`                         | `./tmp`             | SQLite and user-state storage      |
 | `SERVER_PORT`                      | `4200`              | HTTP port                          |
 | `SLACK_EVENTS_PATH`                | `/api/slack/events` | Slack Events API path              |
 | `SLACK_EVENT_DEDUPLICATION_WINDOW` | `5m`                | Slack event retry retention window |
@@ -178,8 +178,27 @@ task bot:run -- delete-messages-from-channel --channel C01234567
 ## Development
 
 ```sh
+task init   # install tools and create the ignored .env file
+task start  # run with Air hot reload
 task test   # tests
-task check  # lint and security checks
+task check  # lint, security, and committed-artifact checks
 task fix    # formatting and automatic fixes
 task build  # build ./bin/bot
+task clean  # remove the Air temporary executable
 ```
+
+Development commands keep generated files in these ignored locations:
+
+| Path                             | Contents                                      |
+| -------------------------------- | --------------------------------------------- |
+| `.env`                           | Local environment settings created by setup   |
+| `bin/bot`                        | `task build` output                           |
+| `cmd/bot/build/`, `cmd/bot/tmp/` | Air binaries, logs, and hot-reload state      |
+| `tmp/`                           | Default databases and other mutable bot state |
+| `coverage.out`                   | Local or CI test coverage                     |
+
+Database sidecar files (`*.db-shm` and `*.db-wal`) and database files (`*.db`) are also ignored.
+Stop the bot before cleaning runtime state. `task clean` removes only Air's temporary executable;
+remove other generated files from the paths above when they are no longer needed. CI runs the same
+tracked-artifact guard as `task check` and fails if representative binaries, databases, coverage, or
+runtime directories are committed, even when added with Git's force option.

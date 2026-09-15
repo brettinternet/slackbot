@@ -40,6 +40,7 @@ tasks:
   check:
     desc: Run checks
     cmds:
+      - go run ./tools/check-runtime-artifacts
       - go vet ./...
       - golangci-lint run --timeout 5m
       - gosec ./...
@@ -60,7 +61,7 @@ tasks:
   clean:
     desc: Clean build artifacts
     cmds:
-      - rm {{.MAIN_DIR}}/tmp/main
+      - rm -f cmd/bot/build/main
 
   build:
     desc: Build

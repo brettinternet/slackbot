@@ -99,6 +99,18 @@ showerthought:
 	}
 }
 
+func TestConfigManagerDefaultsDataDirToIgnoredRuntimePath(t *testing.T) {
+	t.Parallel()
+
+	manager := &ConfigManager{
+		cliOverrides: &CLIOverrides{},
+		buildOpts:    BuildOpts{},
+	}
+	if got := manager.mergeConfigs(&FileConfig{}).DataDir; got != "./tmp" {
+		t.Fatalf("default data directory = %q, want %q", got, "./tmp")
+	}
+}
+
 func TestNotifySubscribersPreservesReloadOrder(t *testing.T) {
 	var versions []string
 	manager := &ConfigManager{

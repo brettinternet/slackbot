@@ -22,7 +22,9 @@ AGENTS.local.md
 
 # Go
 go.work.sum
-bin/bot
+/bin/bot
+/cmd/bot/build/
+/cmd/bot/tmp/
 
 # Tests
 *.test
@@ -41,6 +43,7 @@ jwt
 *.db-wal
 
 # Air
+/tmp/
 tmp
 
 # build output

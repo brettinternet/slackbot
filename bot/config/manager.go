@@ -193,7 +193,7 @@ func (cm *ConfigManager) mergeConfigs(fileConfig *FileConfig) configOpts {
 
 	opts.LogLevel = stringWithOverride("info", cm.cliOverrides.LogLevel)
 	opts.Environment = stringWithOverride(cm.buildOpts.BuildEnvironment, cm.cliOverrides.Environment)
-	opts.DataDir = stringWithOverride("./", cm.cliOverrides.DataDir)
+	opts.DataDir = stringWithOverride("./tmp", cm.cliOverrides.DataDir)
 	opts.ConfigFile = stringWithOverride("./config.yaml", cm.cliOverrides.ConfigFile)
 	opts.ServerPort = uint32WithOverride(4200, cm.cliOverrides.ServerPort)
 	opts.SlackEventsPath = stringWithOverride("/api/slack/events", cm.cliOverrides.SlackEventPath)

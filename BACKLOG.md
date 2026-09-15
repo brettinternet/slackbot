@@ -194,6 +194,8 @@ Dependencies: SB-010
 
 ### SB-013: Keep runtime artifacts out of source directories
 
+Status: Complete
+
 Formalize the existing ignore rules and prevent accidental commits of local state.
 
 Acceptance criteria:
