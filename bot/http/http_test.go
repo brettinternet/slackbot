@@ -4,15 +4,20 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/slack-go/slack/slackevents"
+	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 // mockSlackService for testing
@@ -39,13 +44,16 @@ func (errorReader) Read([]byte) (int, error) {
 
 // mockSlackEventProcessor for testing
 type mockSlackEventProcessor struct {
-	processEventCalled bool
+	processEventCalled atomic.Bool
+	lastEventMu        sync.Mutex
 	lastEvent          any
 }
 
 func (m *mockSlackEventProcessor) PushEvent(event slackevents.EventsAPIEvent) {
-	m.processEventCalled = true
+	m.lastEventMu.Lock()
 	m.lastEvent = event
+	m.lastEventMu.Unlock()
+	m.processEventCalled.Store(true)
 }
 
 func (m *mockSlackEventProcessor) ProcessorType() string {
@@ -276,6 +284,9 @@ func TestServer_RegisterEventProcessor(t *testing.T) {
 	if len(server.slackEventProcessors) != 1 {
 		t.Errorf("After registration processors count = %d, want 1", len(server.slackEventProcessors))
 	}
+	if err := server.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
 }
 
 func TestServer_EventProcessing(t *testing.T) {
@@ -303,9 +314,277 @@ func TestServer_EventProcessing(t *testing.T) {
 		t.Errorf("Event processing should return 200, got %d", w.Code)
 	}
 
-	// Processor should have been called
-	if !processor.processEventCalled {
+	// Processor dispatch is asynchronous.
+	deadline := time.Now().Add(time.Second)
+	for !processor.processEventCalled.Load() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !processor.processEventCalled.Load() {
 		t.Error("Event processor should have been called")
+	}
+	if err := server.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+}
+
+type blockingEventProcessor struct {
+	started chan struct{}
+	release chan struct{}
+	calls   atomic.Int64
+}
+
+func (p *blockingEventProcessor) PushEvent(slackevents.EventsAPIEvent) {
+	p.calls.Add(1)
+	select {
+	case p.started <- struct{}{}:
+	default:
+	}
+	<-p.release
+}
+
+func (p *blockingEventProcessor) ProcessorType() string { return "blocked" }
+
+type acceptingSlackService struct{}
+
+func (acceptingSlackService) VerifyRequest(http.Header, []byte) error { return nil }
+
+type blockingSlackService struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (s *blockingSlackService) VerifyRequest(http.Header, []byte) error {
+	close(s.started)
+	<-s.release
+	return nil
+}
+
+type internallyQueuedProcessor struct {
+	pending atomic.Int64
+	started chan struct{}
+	release chan struct{}
+}
+
+func (p *internallyQueuedProcessor) PushEvent(slackevents.EventsAPIEvent) {
+	p.pending.Add(1)
+	select {
+	case p.started <- struct{}{}:
+	default:
+	}
+	go func() {
+		<-p.release
+		p.pending.Add(-1)
+	}()
+}
+
+func (p *internallyQueuedProcessor) ProcessorType() string { return "internally-queued" }
+func (p *internallyQueuedProcessor) PendingEvents() int64  { return p.pending.Load() }
+
+func postSlackEvent(server *Server, text string) *httptest.ResponseRecorder {
+	body := `{"type":"event_callback","event":{"type":"message","text":"` + text + `"}}`
+	req := httptest.NewRequest(http.MethodPost, "/slack/events", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	server.serveMux.ServeHTTP(w, req)
+	return w
+}
+
+func TestServer_BeginShutdownPreservesInFlightRequest(t *testing.T) {
+	slackService := &blockingSlackService{started: make(chan struct{}), release: make(chan struct{})}
+	server := NewServer(zaptest.NewLogger(t), Config{SlackEventPath: "/slack/events"}, slackService)
+	processor := &mockSlackEventProcessor{}
+	server.RegisterEventProcessor(processor)
+
+	response := make(chan int, 1)
+	go func() { response <- postSlackEvent(server, "in flight").Code }()
+	select {
+	case <-slackService.started:
+	case <-time.After(time.Second):
+		t.Fatal("request did not enter verification")
+	}
+	if err := server.BeginShutdown(context.Background()); err != nil {
+		t.Fatalf("BeginShutdown() error = %v", err)
+	}
+	close(slackService.release)
+	if got := <-response; got != http.StatusOK {
+		t.Fatalf("in-flight event status = %d, want %d", got, http.StatusOK)
+	}
+	if err := server.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+	if !processor.processEventCalled.Load() {
+		t.Error("in-flight event was acknowledged but not dispatched")
+	}
+}
+
+func TestServer_ClosedDispatchRequestsRetry(t *testing.T) {
+	slackService := &blockingSlackService{started: make(chan struct{}), release: make(chan struct{})}
+	server := NewServer(zaptest.NewLogger(t), Config{SlackEventPath: "/slack/events"}, slackService)
+	processor := &mockSlackEventProcessor{}
+	server.RegisterEventProcessor(processor)
+
+	response := make(chan int, 1)
+	go func() { response <- postSlackEvent(server, "past deadline").Code }()
+	select {
+	case <-slackService.started:
+	case <-time.After(time.Second):
+		t.Fatal("request did not enter verification")
+	}
+	<-server.closeDispatchQueues()
+	close(slackService.release)
+	if got := <-response; got != http.StatusServiceUnavailable {
+		t.Fatalf("request after dispatch cutoff status = %d, want %d", got, http.StatusServiceUnavailable)
+	}
+	if processor.processEventCalled.Load() {
+		t.Error("request after dispatch cutoff was unexpectedly dispatched")
+	}
+}
+
+func TestServer_SaturatedProcessorDoesNotDelayAcknowledgement(t *testing.T) {
+	core, logs := observer.New(zap.WarnLevel)
+	server := NewServer(zap.New(core), Config{SlackEventPath: "/slack/events"}, acceptingSlackService{})
+	processor := &blockingEventProcessor{started: make(chan struct{}, 1), release: make(chan struct{})}
+	server.RegisterEventProcessor(processor)
+	defer func() {
+		close(processor.release)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	}()
+
+	if got := postSlackEvent(server, "first").Code; got != http.StatusOK {
+		t.Fatalf("first event status = %d, want %d", got, http.StatusOK)
+	}
+	select {
+	case <-processor.started:
+	case <-time.After(time.Second):
+		t.Fatal("processor did not receive first event")
+	}
+	for range SlackEventQueueCapacity {
+		server.dispatchSlackEvent(slackevents.EventsAPIEvent{})
+	}
+
+	response := make(chan int, 1)
+	go func() { response <- postSlackEvent(server, "sensitive message").Code }()
+	select {
+	case got := <-response:
+		if got != http.StatusOK {
+			t.Errorf("saturated event status = %d, want %d", got, http.StatusOK)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("webhook acknowledgement waited for the saturated processor")
+	}
+
+	entries := logs.FilterMessage("Slack event processor queue full; dropping event").All()
+	if len(entries) != 1 {
+		t.Fatalf("queue overflow log count = %d, want 1", len(entries))
+	}
+	if strings.Contains(entries[0].Message+fmt.Sprint(entries[0].ContextMap()), "sensitive message") {
+		t.Error("queue overflow log leaked message content")
+	}
+}
+
+func TestServer_ConcurrentDeliveryAndShutdownDrain(t *testing.T) {
+	server := NewServer(zaptest.NewLogger(t), Config{SlackEventPath: "/slack/events"}, acceptingSlackService{})
+	processor := &blockingEventProcessor{started: make(chan struct{}, 1), release: make(chan struct{})}
+	server.RegisterEventProcessor(processor)
+
+	const eventCount = 25
+	var requests sync.WaitGroup
+	requests.Add(eventCount)
+	statuses := make(chan int, eventCount)
+	for range eventCount {
+		go func() {
+			defer requests.Done()
+			statuses <- postSlackEvent(server, "hello").Code
+		}()
+	}
+	requests.Wait()
+	close(statuses)
+	for status := range statuses {
+		if status != http.StatusOK {
+			t.Fatalf("concurrent event status = %d, want %d", status, http.StatusOK)
+		}
+	}
+
+	close(processor.release)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := server.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+	if got := processor.calls.Load(); got != eventCount {
+		t.Errorf("processed events = %d, want %d", got, eventCount)
+	}
+}
+
+func TestServer_ShutdownWaitsForProcessorInternalQueue(t *testing.T) {
+	server := NewServer(zaptest.NewLogger(t), Config{}, acceptingSlackService{})
+	processor := &internallyQueuedProcessor{
+		started: make(chan struct{}, 1),
+		release: make(chan struct{}),
+	}
+	server.RegisterEventProcessor(processor)
+	server.dispatchSlackEvent(slackevents.EventsAPIEvent{})
+	select {
+	case <-processor.started:
+	case <-time.After(time.Second):
+		t.Fatal("processor did not accept event")
+	}
+
+	shutdown := make(chan error, 1)
+	go func() { shutdown <- server.Shutdown(context.Background()) }()
+	select {
+	case err := <-shutdown:
+		t.Fatalf("Shutdown() returned before internal queue drained: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(processor.release)
+	select {
+	case err := <-shutdown:
+		if err != nil {
+			t.Fatalf("Shutdown() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Shutdown() did not finish after internal queue drained")
+	}
+}
+
+func TestServer_ShutdownReportsUndrainedEvents(t *testing.T) {
+	core, logs := observer.New(zap.ErrorLevel)
+	server := NewServer(zap.New(core), Config{}, acceptingSlackService{})
+	processor := &blockingEventProcessor{started: make(chan struct{}, 1), release: make(chan struct{})}
+	server.RegisterEventProcessor(processor)
+	defer func() {
+		close(processor.release)
+		<-server.dispatchDone
+	}()
+
+	server.dispatchSlackEvent(slackevents.EventsAPIEvent{})
+	select {
+	case <-processor.started:
+	case <-time.After(time.Second):
+		t.Fatal("processor did not receive event")
+	}
+	server.dispatchSlackEvent(slackevents.EventsAPIEvent{})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if err := server.Shutdown(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Shutdown() error = %v, want deadline exceeded", err)
+	}
+	entries := logs.FilterMessage("Slack processor events abandoned at shutdown deadline").All()
+	if len(entries) != 1 {
+		t.Fatalf("abandoned-event log count = %d, want 1", len(entries))
+	}
+	if got := entries[0].ContextMap()["count"]; got != int64(1) {
+		t.Errorf("abandoned-event count = %v, want 1", got)
+	}
+	inFlight := logs.FilterMessage("Slack processor events still in flight at shutdown deadline").All()
+	if len(inFlight) != 1 {
+		t.Fatalf("in-flight event log count = %d, want 1", len(inFlight))
+	}
+	if got := inFlight[0].ContextMap()["count"]; got != int64(1) {
+		t.Errorf("in-flight event count = %v, want 1", got)
 	}
 }
 

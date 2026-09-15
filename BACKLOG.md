@@ -20,6 +20,8 @@ Acceptance criteria:
 
 ### SB-002: Acknowledge Slack events without processor backpressure
 
+Status: Complete
+
 Decouple Slack's HTTP acknowledgement deadline from downstream event processing.
 
 Acceptance criteria:

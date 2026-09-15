@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -32,16 +33,21 @@ type Server struct {
 	isShuttingDown       atomic.Bool
 	isReady              atomic.Bool
 	slack                slackService
-	slackEventProcessors []slackEventProcessor
+	slackEventProcessors []*slackEventDispatcher
 	serverMu             sync.RWMutex // Protects server field
+	dispatchMu           sync.RWMutex
+	dispatchAccepting    bool
+	dispatchWG           sync.WaitGroup
+	dispatchDone         chan struct{}
 }
 
 func NewServer(log *zap.Logger, config Config, slack slackService) *Server {
 	h := &Server{
-		log:      log,
-		serveMux: http.NewServeMux(),
-		config:   config,
-		slack:    slack,
+		log:               log,
+		serveMux:          http.NewServeMux(),
+		config:            config,
+		slack:             slack,
+		dispatchAccepting: true,
 	}
 	h.registerHealthEndpoints()
 	h.registerSlackEndpoints()
@@ -54,7 +60,7 @@ func (h *Server) Run(ctx context.Context) error {
 		port = DefaultServerPort
 	}
 	addr := fmt.Sprintf(":%d", port)
-	
+
 	server := &http.Server{
 		Addr:              addr,
 		Handler:           h.serveMux,
@@ -66,7 +72,7 @@ func (h *Server) Run(ctx context.Context) error {
 			return ctx
 		},
 	}
-	
+
 	h.serverMu.Lock()
 	h.server = server
 	h.serverMu.Unlock()
@@ -91,14 +97,100 @@ func (h *Server) BeginShutdown(ctx context.Context) error {
 }
 
 func (h *Server) Shutdown(ctx context.Context) error {
+	var shutdownErr error
 	h.serverMu.RLock()
 	server := h.server
 	h.serverMu.RUnlock()
-	
-	if server == nil {
-		return nil
+	if server != nil {
+		shutdownErr = server.Shutdown(ctx)
 	}
-	return server.Shutdown(ctx)
+
+	done := h.closeDispatchQueues()
+	select {
+	case <-done:
+		if err := h.waitForProcessorQueues(ctx); err != nil {
+			return errors.Join(shutdownErr, err)
+		}
+		return shutdownErr
+	case <-ctx.Done():
+		h.abandonDispatchQueues()
+		h.reportProcessorPending()
+		return errors.Join(shutdownErr, fmt.Errorf("drain Slack event processors: %w", ctx.Err()))
+	}
+}
+
+func (h *Server) closeDispatchQueues() <-chan struct{} {
+	h.dispatchMu.Lock()
+	defer h.dispatchMu.Unlock()
+	h.dispatchAccepting = false
+	if h.dispatchDone != nil {
+		return h.dispatchDone
+	}
+	for _, dispatcher := range h.slackEventProcessors {
+		close(dispatcher.queue)
+	}
+	h.dispatchDone = make(chan struct{})
+	go func() {
+		h.dispatchWG.Wait()
+		close(h.dispatchDone)
+	}()
+	return h.dispatchDone
+}
+
+func (h *Server) abandonDispatchQueues() {
+	h.dispatchMu.RLock()
+	defer h.dispatchMu.RUnlock()
+	for _, dispatcher := range h.slackEventProcessors {
+		abandoned, inFlight := dispatcher.abandon()
+		if abandoned > 0 {
+			h.log.Error("Slack processor events abandoned at shutdown deadline",
+				zap.String("processor", dispatcher.processor.ProcessorType()),
+				zap.Int("count", abandoned))
+		}
+		if inFlight > 0 {
+			h.log.Error("Slack processor events still in flight at shutdown deadline",
+				zap.String("processor", dispatcher.processor.ProcessorType()),
+				zap.Int("count", inFlight))
+		}
+	}
+}
+
+func (h *Server) waitForProcessorQueues(ctx context.Context) error {
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if h.processorPendingCount() == 0 {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			h.reportProcessorPending()
+			return fmt.Errorf("drain processor-internal event queues: %w", ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+func (h *Server) processorPendingCount() int64 {
+	var total int64
+	for _, dispatcher := range h.slackEventProcessors {
+		if reporter, ok := dispatcher.processor.(slackEventPendingReporter); ok {
+			total += reporter.PendingEvents()
+		}
+	}
+	return total
+}
+
+func (h *Server) reportProcessorPending() {
+	for _, dispatcher := range h.slackEventProcessors {
+		if reporter, ok := dispatcher.processor.(slackEventPendingReporter); ok {
+			if count := reporter.PendingEvents(); count > 0 {
+				h.log.Error("Slack processor events abandoned at shutdown deadline",
+					zap.String("processor", dispatcher.processor.ProcessorType()),
+					zap.Int64("count", count))
+			}
+		}
+	}
 }
 
 func (h *Server) registerHealthEndpoints() {

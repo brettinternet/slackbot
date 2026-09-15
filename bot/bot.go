@@ -278,16 +278,16 @@ func (s *Bot) BeginShutdown(ctx context.Context) error {
 // Shutdown resources in reverse order of the Setup/Run
 func (s *Bot) Shutdown(ctx context.Context) error {
 	var errs error
-	// Stop vibecheck first so full-queue backpressure releases any webhook handlers
-	// before HTTP shutdown waits for them.
-	if s.vibecheck != nil {
-		if err := s.vibecheck.Stop(ctx); err != nil {
-			errs = errors.Join(errs, fmt.Errorf("stop vibecheck: %w", err))
-		}
-	}
+	// Stop intake and drain the per-processor dispatch queues while feature workers
+	// are still available to accept the queued events.
 	if s.http != nil {
 		if err := s.http.Shutdown(ctx); err != nil {
 			errs = errors.Join(errs, fmt.Errorf("shutdown http server: %w", err))
+		}
+	}
+	if s.vibecheck != nil {
+		if err := s.vibecheck.Stop(ctx); err != nil {
+			errs = errors.Join(errs, fmt.Errorf("stop vibecheck: %w", err))
 		}
 	}
 	if s.aichat != nil {

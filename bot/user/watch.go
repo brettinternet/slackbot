@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/slack-go/slack"
@@ -92,6 +93,7 @@ type UserWatch struct {
 	workerDone      chan struct{}
 	started         bool
 	eventCh         chan struct{}
+	pendingEvents   atomic.Int64
 }
 
 // NewUserWatch accepts the Slack service while retaining compatibility with callers that
@@ -342,6 +344,7 @@ func (o *UserWatch) worker(ctx context.Context, done chan struct{}) {
 					o.log.Error("reconcile Slack users after event", zap.Error(err))
 				}
 			}
+			o.pendingEvents.Add(-1)
 		case <-ctx.Done():
 			return
 		}
@@ -349,13 +352,21 @@ func (o *UserWatch) worker(ctx context.Context, done chan struct{}) {
 }
 
 func (o *UserWatch) PushEvent(event slackevents.EventsAPIEvent) {
+	if !o.isEnabled() {
+		return
+	}
 	if event.InnerEvent.Type == "team_join" || event.InnerEvent.Type == "user_change" {
+		o.pendingEvents.Add(1)
 		select {
 		case o.eventCh <- struct{}{}:
 		default:
+			o.pendingEvents.Add(-1)
 		}
 	}
 }
+
+func (o *UserWatch) PendingEvents() int64 { return o.pendingEvents.Load() }
+
 func (o *UserWatch) ProcessorType() string { return "user-watch" }
 
 // UpdateNotifyChannel validates a replacement before making it visible to workers.

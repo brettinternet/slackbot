@@ -115,6 +115,7 @@ type AIChat struct {
 	shutdownDone    chan struct{}
 	queueDepth      atomic.Int64
 	queueDrops      atomic.Uint64
+	pendingEvents   atomic.Int64
 	generationCount atomic.Uint64
 	generationNanos atomic.Int64
 }
@@ -206,16 +207,20 @@ func (a *AIChat) PushEvent(event slackevents.EventsAPIEvent) {
 	}
 
 	a.queueDepth.Add(1)
+	a.pendingEvents.Add(1)
 	select {
 	case a.eventsCh <- event:
 	default:
 		a.queueDepth.Add(-1)
+		a.pendingEvents.Add(-1)
 		a.queueDrops.Add(1)
 		a.log.Warn("AIChat events channel full, dropping event.",
 			zap.Int64("queue_depth", a.queueDepth.Load()),
 			zap.Uint64("queue_drops", a.queueDrops.Load()))
 	}
 }
+
+func (a *AIChat) PendingEvents() int64 { return a.pendingEvents.Load() }
 
 func (a *AIChat) allowChannelEvent(channelID string) bool {
 	a.limiterMutex.Lock()
@@ -247,6 +252,7 @@ func (a *AIChat) handleEvents(ctx context.Context) {
 				case <-workerCtx.Done():
 					for range events {
 						a.queueDepth.Add(-1)
+						a.pendingEvents.Add(-1)
 					}
 					return
 				case event, ok := <-events:
@@ -255,6 +261,7 @@ func (a *AIChat) handleEvents(ctx context.Context) {
 					}
 					a.queueDepth.Add(-1)
 					a.processEventSafely(workerCtx, event)
+					a.pendingEvents.Add(-1)
 				}
 			}
 		}(shards[i])
@@ -268,6 +275,7 @@ func (a *AIChat) handleEvents(ctx context.Context) {
 			select {
 			case <-a.eventsCh:
 				a.queueDepth.Add(-1)
+				a.pendingEvents.Add(-1)
 			default:
 				workers.Wait()
 				return
@@ -287,9 +295,11 @@ func (a *AIChat) handleEvents(ctx context.Context) {
 			case shards[shard] <- event:
 			case <-a.stopCh:
 				a.queueDepth.Add(-1)
+				a.pendingEvents.Add(-1)
 				return
 			case <-ctx.Done():
 				a.queueDepth.Add(-1)
+				a.pendingEvents.Add(-1)
 				return
 			}
 		}

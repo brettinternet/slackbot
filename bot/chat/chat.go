@@ -107,6 +107,7 @@ type Chat struct {
 	config   atomic.Pointer[compiledConfig]
 	eventsCh chan slackevents.EventsAPIEvent
 	dedupe   *messageDeduplicator
+	pending  atomic.Int64
 
 	lifecycleMu sync.Mutex
 	cancel      context.CancelFunc
@@ -185,12 +186,16 @@ func (c *Chat) PushEvent(event slackevents.EventsAPIEvent) {
 		return
 	}
 
+	c.pending.Add(1)
 	select {
 	case c.eventsCh <- event:
 	default:
+		c.pending.Add(-1)
 		c.log.Warn("Chat events channel full, dropping event.")
 	}
 }
+
+func (c *Chat) PendingEvents() int64 { return c.pending.Load() }
 
 func (c *Chat) handleEvents(ctx context.Context, done chan<- struct{}) {
 	defer close(done)
@@ -202,6 +207,7 @@ func (c *Chat) handleEvents(ctx context.Context, done chan<- struct{}) {
 			return
 		case event := <-c.eventsCh:
 			c.processEvent(ctx, event)
+			c.pending.Add(-1)
 		}
 	}
 }

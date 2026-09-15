@@ -20,10 +20,30 @@ type slackEventProcessor interface {
 	ProcessorType() string
 }
 
+type slackEventPendingReporter interface {
+	PendingEvents() int64
+}
+
 func (h *Server) RegisterEventProcessor(processor slackEventProcessor) {
-	h.slackEventProcessors = append(h.slackEventProcessors, processor)
+	dispatcher := newSlackEventDispatcher(h.log, processor)
+
+	h.dispatchMu.Lock()
+	defer h.dispatchMu.Unlock()
+	if !h.dispatchAccepting {
+		h.log.Warn("Slack event processor unavailable during registration",
+			zap.String("processor", processor.ProcessorType()))
+		return
+	}
+	h.slackEventProcessors = append(h.slackEventProcessors, dispatcher)
+	h.dispatchWG.Add(1)
+	go func() {
+		defer h.dispatchWG.Done()
+		dispatcher.run()
+	}()
 	h.log.Info("Registered Slack event processor.",
-		zap.String("type", processor.ProcessorType()))
+		zap.String("type", processor.ProcessorType()),
+		zap.Int("queue_capacity", SlackEventQueueCapacity),
+		zap.String("overflow_policy", "drop_newest"))
 }
 
 // RegisterSlackEndpoints registers HTTP endpoints for handling Slack events
@@ -97,22 +117,39 @@ func (h *Server) handleSlackEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if we have processors for regular events
+	if !h.dispatchSlackEvent(eventsAPIEvent) {
+		http.Error(w, "Slack event processing is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (h *Server) dispatchSlackEvent(event slackevents.EventsAPIEvent) bool {
+	h.dispatchMu.RLock()
+	defer h.dispatchMu.RUnlock()
+
 	if len(h.slackEventProcessors) == 0 {
 		h.log.Debug("No event processors registered, ignoring event")
-		w.WriteHeader(http.StatusOK)
-		return
+		return true
+	}
+	if !h.dispatchAccepting {
+		h.log.Warn("Slack event processors unavailable; event not dispatched",
+			zap.Int("processor_count", len(h.slackEventProcessors)))
+		return false
 	}
 
 	h.log.Debug("Received Slack event",
-		zap.String("type", string(eventsAPIEvent.Type)),
-		zap.Any("innerEvent", eventsAPIEvent.InnerEvent.Type))
-
-	for _, processor := range h.slackEventProcessors {
-		processor.PushEvent(eventsAPIEvent)
+		zap.String("type", string(event.Type)),
+		zap.Any("innerEvent", event.InnerEvent.Type))
+	for _, dispatcher := range h.slackEventProcessors {
+		if !dispatcher.enqueue(event) {
+			h.log.Warn("Slack event processor queue full; dropping event",
+				zap.String("processor", dispatcher.processor.ProcessorType()),
+				zap.Int("queue_capacity", SlackEventQueueCapacity),
+				zap.String("overflow_policy", "drop_newest"))
+		}
 	}
-
-	w.WriteHeader(http.StatusOK)
+	return true
 }
 
 func readRequestBody(w http.ResponseWriter, r *http.Request) ([]byte, error) {

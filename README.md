@@ -67,7 +67,11 @@ Useful settings:
 | `OPENAI_REASONING_EFFORT` | application default | Model reasoning effort             |
 
 The Slack Events endpoint accepts only `POST` requests and limits request bodies to 1 MiB. Slack
-signature verification uses the original request bytes before JSON parsing.
+signature verification uses the original request bytes before JSON parsing. Each registered event
+processor has a 100-event dispatch queue. The endpoint acknowledges valid events without waiting for
+processors; when a processor's queue is full, its newest event is dropped and the overflow is logged
+without message content. Graceful shutdown drains these queues until the shutdown deadline and logs
+any work that remains.
 
 Chat response changes in `config.yaml` reload while the bot runs. Restart after changing other feature
 settings.

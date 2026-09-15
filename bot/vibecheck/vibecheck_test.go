@@ -310,6 +310,21 @@ func TestStopCancelsDelayedKick(t *testing.T) {
 	require.Zero(t, kicks)
 }
 
+func TestScheduledKickRemainsPendingUntilComplete(t *testing.T) {
+	api := &fakeSlackAPI{}
+	service := newTestVibecheck(t, api)
+	service.kickDelay = 20 * time.Millisecond
+	require.NoError(t, service.Start(context.Background()))
+	ban := addBan(t, service.kickedUsers, "user", "channel", time.Minute)
+	service.scheduleKick(service.run.Load(), service.kickDelay, ban, "test")
+	require.EqualValues(t, 1, service.PendingEvents())
+	waitFor(t, func() bool {
+		kicks, _, _ := api.counts()
+		return kicks == 1 && service.PendingEvents() == 0
+	})
+	require.NoError(t, service.Stop(context.Background()))
+}
+
 func TestKickRetriesThenSucceeds(t *testing.T) {
 	api := &fakeSlackAPI{kickErrors: []error{errors.New("temporary"), nil}}
 	service := newTestVibecheck(t, api)

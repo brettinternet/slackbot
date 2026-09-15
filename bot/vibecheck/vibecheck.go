@@ -71,6 +71,7 @@ type vibecheckRun struct {
 	queueMu         sync.Mutex
 	queue           []slackevents.EventsAPIEvent
 	queueFullLogged atomic.Bool
+	pendingEvents   atomic.Int64
 }
 
 func (r *vibecheckRun) enqueue(event slackevents.EventsAPIEvent) bool {
@@ -81,6 +82,7 @@ func (r *vibecheckRun) enqueue(event slackevents.EventsAPIEvent) bool {
 		r.queueMu.Lock()
 		if len(r.queue) < eventQueueCapacity {
 			r.queue = append(r.queue, event)
+			r.pendingEvents.Add(1)
 			r.queueMu.Unlock()
 			select {
 			case r.wake <- struct{}{}:
@@ -239,6 +241,13 @@ func (c *Vibecheck) stopRun(ctx context.Context, run *vibecheckRun) error {
 	}
 }
 
+func (c *Vibecheck) PendingEvents() int64 {
+	if run := c.run.Load(); run != nil {
+		return run.pendingEvents.Load()
+	}
+	return 0
+}
+
 func (c *Vibecheck) PushEvent(event slackevents.EventsAPIEvent) {
 	if !isRelevantEvent(event) {
 		return
@@ -276,6 +285,7 @@ func (c *Vibecheck) handleEvents(run *vibecheckRun) {
 			return
 		}
 		c.processEvent(run, event)
+		run.pendingEvents.Add(-1)
 	}
 }
 
@@ -358,9 +368,11 @@ func (c *Vibecheck) scheduleKick(run *vibecheckRun, delay time.Duration, ban kic
 	if run.ctx.Err() != nil {
 		return
 	}
+	run.pendingEvents.Add(1)
 	run.wg.Add(1)
 	go func() {
 		defer run.wg.Done()
+		defer run.pendingEvents.Add(-1)
 		timer := time.NewTimer(delay)
 		defer timer.Stop()
 		select {
