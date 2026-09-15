@@ -76,6 +76,13 @@ once during the configured retention window. The cache retains at most 10,000 ID
 usable ID are dispatched normally. Graceful shutdown drains processor queues until the shutdown
 deadline and logs any work that remains.
 
+`/ready` returns `503` until initial configuration, Slack authentication, configured feature workers,
+and the HTTP listener have started. These are the required dependencies for the selected
+configuration. Optional user monitoring, AI chat, and shower thoughts are not readiness prerequisites
+when disabled; the vibecheck maintenance worker still starts while new vibechecks are disabled so
+existing bans can expire. Readiness changes to `503` immediately when shutdown begins. `/health` and
+`/healthz` report process health separately.
+
 Chat response changes in `config.yaml` reload while the bot runs. Restart after changing other feature
 settings.
 

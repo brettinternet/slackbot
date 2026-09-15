@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -614,53 +615,74 @@ func TestServer_BeginShutdown(t *testing.T) {
 	}
 }
 
-func TestServer_Lifecycle(t *testing.T) {
-	logger := zaptest.NewLogger(t)
-	config := Config{
-		ServerPort:     0, // Use any available port
-		SlackEventPath: "/slack/events",
+func TestServer_LifecycleReadinessWithoutOptionalProcessors(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
 	}
-	mockSlack := &mockSlackService{}
-	server := NewServer(logger, config, mockSlack)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
+	server := NewServer(zaptest.NewLogger(t), Config{SlackEventPath: "/slack/events"}, &mockSlackService{})
+	server.listen = func(_, _ string) (net.Listener, error) { return listener, nil }
 
-	// Start server in goroutine
 	errChan := make(chan error, 1)
 	go func() {
-		errChan <- server.Run(ctx)
+		errChan <- server.Run(context.Background())
 	}()
 
-	// Give server time to start
-	time.Sleep(100 * time.Millisecond)
-
-	// Manually set server as ready for testing
-	server.isReady.Store(true)
-
-	// Server should be ready
-	if !server.isReady.Load() {
-		t.Error("Server should be ready after starting")
+	readyURL := "http://" + listener.Addr().String() + "/ready"
+	var response *http.Response
+	for range 100 {
+		response, err = http.Get(readyURL) //nolint:gosec // Test server uses a loopback address.
+		if err == nil {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("request ready endpoint: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("ready status after startup = %d, want %d", response.StatusCode, http.StatusOK)
 	}
 
-	// Begin shutdown
-	if err := server.BeginShutdown(ctx); err != nil {
-		t.Errorf("BeginShutdown() error = %v", err)
+	if err := server.BeginShutdown(context.Background()); err != nil {
+		t.Fatalf("BeginShutdown() error = %v", err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	recorder := httptest.NewRecorder()
+	server.serveMux.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Errorf("ready status during shutdown = %d, want %d", recorder.Code, http.StatusServiceUnavailable)
 	}
 
-	// Shutdown
-	if err := server.Shutdown(ctx); err != nil {
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := server.Shutdown(shutdownCtx); err != nil {
 		t.Errorf("Shutdown() error = %v", err)
 	}
 
-	// Wait for Run to complete
 	select {
 	case err := <-errChan:
-		if err != nil && err != context.Canceled && err != http.ErrServerClosed {
+		if err != nil {
 			t.Errorf("Run() error = %v", err)
 		}
 	case <-time.After(time.Second):
 		t.Error("Server did not shut down within timeout")
+	}
+}
+
+func TestServer_StartupFailureStaysUnready(t *testing.T) {
+	server := NewServer(zaptest.NewLogger(t), Config{}, &mockSlackService{})
+	server.listen = func(_, _ string) (net.Listener, error) {
+		return nil, errors.New("dependency unavailable")
+	}
+
+	if err := server.Run(context.Background()); err == nil {
+		t.Fatal("Run() error = nil, want listener failure")
+	}
+	if server.isReady.Load() {
+		t.Error("server became ready after startup dependency failed")
 	}
 }
 

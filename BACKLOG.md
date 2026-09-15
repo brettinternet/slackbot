@@ -53,6 +53,8 @@ Dependencies: SB-002
 
 ### SB-004: Make readiness reflect real dependencies
 
+Status: Complete
+
 Replace the fixed two-second readiness delay with lifecycle-driven state.
 
 Acceptance criteria:

@@ -36,6 +36,7 @@ type Server struct {
 	slack                slackService
 	slackEventProcessors []*slackEventDispatcher
 	serverMu             sync.RWMutex // Protects server field
+	listen               func(network, address string) (net.Listener, error)
 	dispatchMu           sync.RWMutex
 	dispatchAccepting    bool
 	dispatchWG           sync.WaitGroup
@@ -51,6 +52,7 @@ func NewServer(log *zap.Logger, config Config, slack slackService) *Server {
 		slack:             slack,
 		dispatchAccepting: true,
 		eventDeduplicator: newEventDeduplicator(config.SlackEventDeduplicationWindow),
+		listen:            net.Listen,
 	}
 	h.registerHealthEndpoints()
 	h.registerSlackEndpoints()
@@ -80,21 +82,26 @@ func (h *Server) Run(ctx context.Context) error {
 	h.server = server
 	h.serverMu.Unlock()
 
-	// Set the service as ready after a short delay
-	go func() {
-		time.Sleep(2 * time.Second)
-		h.isReady.Store(true)
-		h.log.Debug("Service is ready", zap.String("addr", addr))
-	}()
+	listener, err := h.listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("listen on %s: %w", addr, err)
+	}
 
+	// Bot.Run starts the HTTP server only after Slack and every configured feature
+	// worker have started. A bound listener therefore represents completed startup,
+	// rather than an arbitrary elapsed delay.
+	h.isReady.Store(true)
+	defer h.isReady.Store(false)
 	h.log.Info("Starting http server", zap.String("addr", addr))
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	h.log.Debug("Service is ready", zap.String("addr", addr))
+	if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
 		return err
 	}
 	return nil
 }
 
 func (h *Server) BeginShutdown(ctx context.Context) error {
+	h.isReady.Store(false)
 	h.isShuttingDown.Store(true)
 	return nil
 }
@@ -232,7 +239,7 @@ func (h *Server) healthz(w http.ResponseWriter, r *http.Request) {
 func (h *Server) ready(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	if !h.isReady.Load() {
+	if h.isShuttingDown.Load() || !h.isReady.Load() {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_ = json.NewEncoder(w).Encode(map[string]string{
 			"status": "not ready",
