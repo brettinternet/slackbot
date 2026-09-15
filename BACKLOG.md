@@ -91,6 +91,8 @@ Dependencies: SB-002
 
 ### SB-007: Tighten service lifecycle and shutdown handling
 
+Status: Complete
+
 Make startup and shutdown behavior deterministic and consistently report failures.
 
 Acceptance criteria:

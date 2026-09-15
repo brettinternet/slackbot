@@ -97,7 +97,7 @@ func TestRun_InvalidCommand(t *testing.T) {
 	// Clear any environment variables that might provide credentials
 	t.Setenv("SLACK_TOKEN", "")
 	t.Setenv("SLACK_SIGNING_SECRET", "")
-	
+
 	args := []string{"bot", "invalid-command"}
 	ctx := context.Background()
 
@@ -112,7 +112,7 @@ func TestRun_StartCommand_MissingCredentials(t *testing.T) {
 	// Clear any environment variables that might provide credentials
 	t.Setenv("SLACK_TOKEN", "")
 	t.Setenv("SLACK_SIGNING_SECRET", "")
-	
+
 	args := []string{"bot", "start"}
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
@@ -159,12 +159,12 @@ func TestMain_Integration(t *testing.T) {
 	// We can't easily test the full main() function in unit tests since it
 	// handles signals and runs indefinitely, but we can test that it doesn't
 	// immediately panic or have obvious issues.
-	
+
 	// Test that main() can be called without panicking
 	// We'll do this by testing that the core logic works
 	ctx := context.Background()
 	args := []string{"bot", "--help"}
-	
+
 	err := run(ctx, args)
 	if err != nil {
 		t.Errorf("Integration test: run() with help should not error, got %v", err)
@@ -181,19 +181,11 @@ func TestTerminationTimeouts(t *testing.T) {
 		t.Error("terminationDrainPeriod should be positive")
 	}
 
-	if terminationHardPeriod <= 0 {
-		t.Error("terminationHardPeriod should be positive")
-	}
-
 	// Drain period should be shorter than grace period
 	if terminationDrainPeriod >= terminationGracePeriod {
 		t.Error("terminationDrainPeriod should be shorter than terminationGracePeriod")
 	}
 
-	// Hard period should be shorter than grace period
-	if terminationHardPeriod >= terminationGracePeriod {
-		t.Error("terminationHardPeriod should be shorter than terminationGracePeriod")
-	}
 }
 
 func TestBuildVariables(t *testing.T) {

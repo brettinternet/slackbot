@@ -589,6 +589,39 @@ func TestServer_ShutdownReportsUndrainedEvents(t *testing.T) {
 	}
 }
 
+func TestServer_RunAfterShutdownStartsDoesNotListen(t *testing.T) {
+	for _, shutdown := range []struct {
+		name string
+		call func(*Server) error
+	}{
+		{name: "begin shutdown", call: func(server *Server) error {
+			return server.BeginShutdown(context.Background())
+		}},
+		{name: "shutdown", call: func(server *Server) error {
+			return server.Shutdown(context.Background())
+		}},
+	} {
+		t.Run(shutdown.name, func(t *testing.T) {
+			server := NewServer(zap.NewNop(), Config{}, &mockSlackService{})
+			var listenCalls atomic.Int32
+			server.listen = func(string, string) (net.Listener, error) {
+				listenCalls.Add(1)
+				return nil, errors.New("unexpected listen")
+			}
+			if err := shutdown.call(server); err != nil {
+				t.Fatalf("shutdown error = %v", err)
+			}
+
+			if err := server.Run(context.Background()); err == nil {
+				t.Fatal("Run() error = nil, want shutdown-started error")
+			}
+			if got := listenCalls.Load(); got != 0 {
+				t.Fatalf("listen calls = %d, want 0", got)
+			}
+		})
+	}
+}
+
 func TestServer_BeginShutdown(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	config := Config{

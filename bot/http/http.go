@@ -60,6 +60,10 @@ func NewServer(log *zap.Logger, config Config, slack slackService) *Server {
 }
 
 func (h *Server) Run(ctx context.Context) error {
+	if h.isShuttingDown.Load() {
+		return errors.New("http server shutdown already started")
+	}
+
 	port := h.config.ServerPort
 	if port == 0 {
 		port = DefaultServerPort
@@ -82,9 +86,16 @@ func (h *Server) Run(ctx context.Context) error {
 	h.server = server
 	h.serverMu.Unlock()
 
+	if h.isShuttingDown.Load() {
+		return errors.New("http server shutdown already started")
+	}
+
 	listener, err := h.listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", addr, err)
+	}
+	if h.isShuttingDown.Load() {
+		return errors.Join(errors.New("http server shutdown already started"), listener.Close())
 	}
 
 	// Bot.Run starts the HTTP server only after Slack and every configured feature
@@ -107,6 +118,9 @@ func (h *Server) BeginShutdown(ctx context.Context) error {
 }
 
 func (h *Server) Shutdown(ctx context.Context) error {
+	h.isReady.Store(false)
+	h.isShuttingDown.Store(true)
+
 	var shutdownErr error
 	h.serverMu.RLock()
 	server := h.server

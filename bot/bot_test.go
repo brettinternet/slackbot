@@ -2,6 +2,8 @@ package bot
 
 import (
 	"context"
+	"errors"
+	"sync/atomic"
 	"testing"
 
 	"github.com/urfave/cli/v3"
@@ -128,41 +130,167 @@ func TestBot_BeginShutdown_NoHTTP(t *testing.T) {
 	}
 }
 
-func TestBot_ForceShutdown(t *testing.T) {
-	buildOpts := config.BuildOpts{
-		BuildVersion:     "test-version",
-		BuildTime:        "test-time",
-		BuildEnvironment: "development",
+func TestBot_Shutdown_EmptyBot(t *testing.T) {
+	bot := NewBot(config.BuildOpts{})
+
+	if err := bot.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown() on uninitialized bot error = %v, want nil", err)
 	}
-
-	bot := NewBot(buildOpts)
-	ctx := context.Background()
-
-	err := bot.ForceShutdown(ctx)
-	if err != nil {
-		t.Errorf("ForceShutdown() error = %v, want nil", err)
+	if err := bot.Shutdown(context.Background()); err != nil {
+		t.Fatalf("repeated Shutdown() error = %v, want nil", err)
 	}
 }
 
-func TestBot_Shutdown_EmptyBot(t *testing.T) {
-	buildOpts := config.BuildOpts{
-		BuildVersion:     "test-version",
-		BuildTime:        "test-time",
-		BuildEnvironment: "development",
+func TestBot_Shutdown_AttemptsEveryStepAndJoinsErrors(t *testing.T) {
+	firstErr := errors.New("first failure")
+	secondErr := errors.New("second failure")
+	var calls []string
+	bot := NewBot(config.BuildOpts{})
+	addTestShutdownStep(t, bot, "first", func(context.Context) error {
+		calls = append(calls, "first")
+		return firstErr
+	})
+	addTestShutdownStep(t, bot, "middle", func(context.Context) error {
+		calls = append(calls, "middle")
+		return nil
+	})
+	addTestShutdownStep(t, bot, "second", func(context.Context) error {
+		calls = append(calls, "second")
+		return secondErr
+	})
+
+	err := bot.Shutdown(context.Background())
+	if !errors.Is(err, firstErr) || !errors.Is(err, secondErr) {
+		t.Fatalf("Shutdown() error = %v, want both shutdown failures", err)
 	}
-
-	bot := NewBot(buildOpts)
-	ctx := context.Background()
-
-	// Test shutdown on empty bot - this will panic because slack is nil
-	// This test demonstrates that Setup() must be called before Shutdown()
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("Shutdown() on uninitialized bot should panic")
+	want := []string{"second", "middle", "first"}
+	if len(calls) != len(want) {
+		t.Fatalf("Shutdown() calls = %v, want %v", calls, want)
+	}
+	for i := range want {
+		if calls[i] != want[i] {
+			t.Fatalf("Shutdown() calls = %v, want %v", calls, want)
 		}
+	}
+}
+
+func TestBot_Shutdown_RepeatedCallsRunCleanupOnce(t *testing.T) {
+	var calls atomic.Int32
+	stepErr := errors.New("shutdown failure")
+	bot := NewBot(config.BuildOpts{})
+	addTestShutdownStep(t, bot, "service", func(context.Context) error {
+		calls.Add(1)
+		return stepErr
+	})
+
+	firstErr := bot.Shutdown(context.Background())
+	secondErr := bot.Shutdown(context.Background())
+	if !errors.Is(firstErr, stepErr) || !errors.Is(secondErr, stepErr) {
+		t.Fatalf("Shutdown() errors = (%v, %v), want cached service failure", firstErr, secondErr)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("shutdown calls = %d, want 1", got)
+	}
+}
+
+func TestBot_Shutdown_ExpiredDeadlineStillAttemptsEveryStep(t *testing.T) {
+	var calls atomic.Int32
+	bot := NewBot(config.BuildOpts{})
+	for range 2 {
+		addTestShutdownStep(t, bot, "service", func(ctx context.Context) error {
+			calls.Add(1)
+			return ctx.Err()
+		})
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := bot.Shutdown(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Shutdown() error = %v, want context canceled", err)
+	}
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("shutdown calls = %d, want 2", got)
+	}
+}
+
+func TestBot_Shutdown_CompletedResultWinsOverCanceledCaller(t *testing.T) {
+	bot := NewBot(config.BuildOpts{})
+	if err := bot.Shutdown(context.Background()); err != nil {
+		t.Fatalf("first Shutdown() error = %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if err := bot.Shutdown(ctx); err != nil {
+		t.Fatalf("repeated Shutdown() error = %v, want cached nil result", err)
+	}
+}
+
+func TestBot_AddShutdownStepAfterShutdownStopsResourceImmediately(t *testing.T) {
+	bot := NewBot(config.BuildOpts{})
+	if err := bot.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+	var stops atomic.Int32
+
+	err := bot.addShutdownStep("late service", func(context.Context) error {
+		stops.Add(1)
+		return nil
+	})
+	if err == nil {
+		t.Fatal("addShutdownStep() error = nil, want shutdown-started error")
+	}
+	if got := stops.Load(); got != 1 {
+		t.Fatalf("stop calls = %d, want 1", got)
+	}
+}
+
+func TestBot_StartServiceStopsServiceWhenShutdownRacesStart(t *testing.T) {
+	bot := NewBot(config.BuildOpts{})
+	startEntered := make(chan struct{})
+	allowStart := make(chan struct{})
+	var stops atomic.Int32
+	startResult := make(chan error, 1)
+	go func() {
+		startResult <- bot.startService(
+			context.Background(),
+			"test service",
+			func(context.Context) error {
+				close(startEntered)
+				<-allowStart
+				return nil
+			},
+			func(context.Context) error {
+				stops.Add(1)
+				return nil
+			},
+		)
 	}()
 
-	_ = bot.Shutdown(ctx)
+	<-startEntered
+	if err := bot.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+	close(allowStart)
+	if err := <-startResult; err == nil {
+		t.Fatal("startService() error = nil, want concurrent shutdown error")
+	}
+	if got := stops.Load(); got != 1 {
+		t.Fatalf("stop calls = %d, want 1", got)
+	}
+}
+
+func addTestShutdownStep(
+	t *testing.T,
+	bot *Bot,
+	name string,
+	stop func(context.Context) error,
+) {
+	t.Helper()
+	if err := bot.addShutdownStep(name, stop); err != nil {
+		t.Fatalf("addShutdownStep() error = %v", err)
+	}
 }
 
 // Helper function to create a minimal command for testing

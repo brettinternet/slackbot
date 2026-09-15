@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -20,14 +22,12 @@ var (
 	// https://victoriametrics.com/blog/go-graceful-shutdown/
 	terminationGracePeriod = 12 * time.Second
 	terminationDrainPeriod = 5 * time.Second
-	terminationHardPeriod  = 3 * time.Second
 )
 
 func init() {
 	if buildEnvironment != config.EnvironmentProduction.String() {
 		terminationGracePeriod = 4 * time.Second
 		terminationDrainPeriod = 1 * time.Second
-		terminationHardPeriod = 1 * time.Second
 	}
 }
 
@@ -51,11 +51,11 @@ func run(rootCtx context.Context, args []string) error {
 	// Flags/commands are parsed after Run
 	start, cmd := bot.NewCommandRoot(b)
 	if err := cmd.Run(rootCtx, args); err != nil {
-		return err
+		return errors.Join(err, shutdownBot(b))
 	}
 
 	if start == nil || !*start {
-		return nil
+		return shutdownBot(b)
 	}
 
 	runCtx, runCancel := context.WithCancel(context.Background())
@@ -67,37 +67,65 @@ func run(rootCtx context.Context, args []string) error {
 
 	log := b.Logger()
 	log.Info("Server started.")
+	var runErr error
+	serviceResultRead := false
 	select {
 	case <-rootCtx.Done():
 	case err := <-svcErr:
+		serviceResultRead = true
 		if err != nil {
-			log.Error("Error during server startup.", zap.Error(err))
+			runErr = fmt.Errorf("run server: %w", err)
+			log.Error("Error while running server.", zap.Error(err))
 		}
 	}
 	stop()
 	log.Info("Received shutdown signal, beginning graceful shutdown.")
 	if err := b.BeginShutdown(runCtx); err != nil {
+		runErr = errors.Join(runErr, fmt.Errorf("begin shutdown: %w", err))
 		log.Error("Error during begin shutdown.", zap.Error(err))
 	}
 	if err := sleepContext(runCtx, terminationDrainPeriod); err != nil { // Give time for readiness check to propagate
+		runErr = errors.Join(runErr, fmt.Errorf("drain wait: %w", err))
 		log.Error("Error during drain wait.", zap.Error(err))
 	}
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), terminationGracePeriod)
 	defer shutdownCancel()
 	log.Info("Shutting down.")
-	err := b.Shutdown(shutdownCtx)
-	runCancel()
-	if err != nil {
+	if err := b.Shutdown(shutdownCtx); err != nil {
+		runErr = errors.Join(runErr, fmt.Errorf("shutdown: %w", err))
 		log.Error("Error during server shutdown.", zap.Error(err))
-		if err := sleepContext(shutdownCtx, terminationHardPeriod); err != nil { // Give time for shutdown to complete
-			log.Error("Error during shutdown wait.", zap.Error(err))
+	}
+	runCancel()
+	if !serviceResultRead {
+		select {
+		case err := <-svcErr:
+			serviceResultRead = true
+			if err != nil {
+				runErr = errors.Join(runErr, fmt.Errorf("run server: %w", err))
+			}
+		default:
 		}
 	}
-	log.Info("Force shutting down server if still running.")
-	if err := b.ForceShutdown(shutdownCtx); err != nil {
-		log.Error("Error during server force shutdown.", zap.Error(err))
+	if !serviceResultRead {
+		select {
+		case err := <-svcErr:
+			if err != nil {
+				runErr = errors.Join(runErr, fmt.Errorf("run server: %w", err))
+			}
+		case <-shutdownCtx.Done():
+			runErr = errors.Join(runErr, fmt.Errorf("wait for server exit: %w", shutdownCtx.Err()))
+		}
 	}
 	log.Info("Shutdown complete.")
+	return runErr
+}
+
+func shutdownBot(b *bot.Bot) error {
+	ctx, cancel := context.WithTimeout(context.Background(), terminationGracePeriod)
+	defer cancel()
+	if err := b.Shutdown(ctx); err != nil {
+		return fmt.Errorf("shutdown: %w", err)
+	}
 	return nil
 }
 
