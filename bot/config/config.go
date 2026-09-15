@@ -255,6 +255,7 @@ func newConfig(opts configOpts) (Config, error) {
 		AIChat: aichat.Config{
 			Enabled:            len(personas) > 0,
 			DataDir:            dataDir,
+			Model:              valueOrDefault(opts.OpenAIModel, ai.DefaultModel),
 			Personas:           personas,
 			StickyDuration:     opts.PersonasStickyDuration,
 			MaxContextMessages: opts.AIChatMaxContextMessages,

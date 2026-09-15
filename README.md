@@ -125,7 +125,9 @@ assignments are removed by the same cleanup. Both settings apply to a running pr
 configuration reload. On startup, ordered SQLite migrations upgrade databases created by older
 releases in one transaction and record applied versions in `schema_migrations`. Startup fails with
 the migration version and name if an upgrade cannot complete; existing conversation and persona data
-is left unchanged.
+is left unchanged. `aichat.max_context_tokens` is measured with the configured model's tokenizer and
+includes per-message chat framing. Unknown model names use a conservative fallback of one token per
+UTF-8 byte plus framing, so unsupported models do not silently overfill the context budget.
 
 Operators can delete one exact conversation scope, including its persisted persona assignment:
 

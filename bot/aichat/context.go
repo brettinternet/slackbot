@@ -220,6 +220,7 @@ func (cs *ContextStorage) GetRecentContext(userID, channelID string, config *Con
 	var contexts []ConversationContext
 	totalTokens := 0
 	maxTokens := config.MaxContextTokens
+	counter := config.modelTokenCounter()
 
 	for rows.Next() {
 		var ctx ConversationContext
@@ -228,8 +229,7 @@ func (cs *ContextStorage) GetRecentContext(userID, channelID string, config *Con
 			return nil, err
 		}
 
-		// Rough token estimation (4 characters ≈ 1 token)
-		messageTokens := len(ctx.Message) / 4
+		messageTokens := counter.messageTokens(ctx.Message)
 		if maxTokens > 0 && totalTokens+messageTokens > maxTokens {
 			break // Stop adding messages if we exceed token limit
 		}

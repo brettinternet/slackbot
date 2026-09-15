@@ -163,6 +163,8 @@ Acceptance criteria:
 
 ### SB-011: Use model-aware token counting
 
+Status: Complete
+
 Replace the four-characters-per-token estimate with counting appropriate for the configured model.
 
 Acceptance criteria:

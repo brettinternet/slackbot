@@ -68,11 +68,16 @@ func TestSelectContextTurnsUsesNewestFirstBudget(t *testing.T) {
 		{role: "human", text: "new", timestamp: now.Add(-time.Minute)},
 		{role: "ai", text: "middle", timestamp: now.Add(-time.Hour)},
 	}
-	selected := selectContextTurns(turns, 2, 100)
+	selected := selectContextTurns(turns, 2, 100, newTokenCounter("unsupported-test-model"))
 	if len(selected) != 2 || selected[0].text != "middle" || selected[1].text != "new" {
 		t.Fatalf("expected newest context retained chronologically, got %#v", selected)
 	}
-	selected = selectContextTurns([]contextTurn{{text: "12345678", timestamp: now}}, 10, 1)
+	selected = selectContextTurns(
+		[]contextTurn{{text: "12345678", timestamp: now}},
+		10,
+		1,
+		newTokenCounter("unsupported-test-model"),
+	)
 	if len(selected) != 0 {
 		t.Fatalf("token budget should exclude oversized context: %#v", selected)
 	}

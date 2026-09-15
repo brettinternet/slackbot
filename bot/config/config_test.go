@@ -354,6 +354,9 @@ func TestNewConfig(t *testing.T) {
 	if config.AI.Model != "gpt-5.6-luna" {
 		t.Errorf("newConfig() AI.Model = %q, want gpt-5.6-luna", config.AI.Model)
 	}
+	if config.AIChat.Model != "gpt-5.6-luna" {
+		t.Errorf("newConfig() AIChat.Model = %q, want gpt-5.6-luna", config.AIChat.Model)
+	}
 	if config.AI.ReasoningEffort != "low" {
 		t.Errorf("newConfig() AI.ReasoningEffort = %q, want low", config.AI.ReasoningEffort)
 	}

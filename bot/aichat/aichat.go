@@ -86,12 +86,14 @@ type FileConfig struct {
 type Config struct {
 	Enabled            bool
 	DataDir            string
+	Model              string
 	Personas           map[string]string
 	StickyDuration     time.Duration
 	MaxContextMessages int           // Maximum number of messages to include in context
 	MaxContextAge      time.Duration // Maximum age of messages to include in context
-	MaxContextTokens   int           // Approximate maximum tokens for context (rough estimate)
+	MaxContextTokens   int           // Maximum model tokens for context, including message framing
 	RateLimitEnabled   bool          // When false, per-channel rate limiting is bypassed
+	tokenCounter       tokenCounter
 }
 
 type personaAssignment struct {
@@ -147,6 +149,7 @@ func (a *AIChat) Metrics() Metrics {
 func NewAIChat(log *zap.Logger, c Config, s slackService, a aiService) (*AIChat, error) {
 	log = botlogging.Component(log, "aichat")
 	c = cloneConfig(c)
+	c.tokenCounter = newTokenCounter(c.Model)
 	contextStorage, err := NewContextStorage(c.DataDir)
 	if err != nil {
 		return nil, fmt.Errorf("initialize context storage: %w", err)
@@ -258,8 +261,10 @@ func (a *AIChat) ClearContext(scope string) (DeletionCounts, error) {
 // SetConfig atomically applies reloadable AI chat and persona settings.
 func (a *AIChat) SetConfig(c Config) {
 	a.configMu.Lock()
-	// Storage is opened at construction and therefore remains restart-required.
+	// Storage and the OpenAI model are fixed at construction and remain restart-required.
 	c.DataDir = a.config.DataDir
+	c.Model = a.config.Model
+	c.tokenCounter = a.config.modelTokenCounter()
 	a.config = cloneConfig(c)
 	a.configMu.Unlock()
 
@@ -931,13 +936,9 @@ type contextTurn struct {
 	order     int // stable ordering when timestamps are unavailable/equal
 }
 
-func estimateTokens(text string) int {
-	return max(1, (len([]rune(text))+3)/4)
-}
-
 // selectContextTurns applies one newest-first message and token budget after all
 // context sources have been combined. Returned turns are chronological for the API.
-func selectContextTurns(turns []contextTurn, maxMessages, maxTokens int) []contextTurn {
+func selectContextTurns(turns []contextTurn, maxMessages, maxTokens int, counter tokenCounter) []contextTurn {
 	if maxMessages <= 0 {
 		maxMessages = 50
 	}
@@ -957,11 +958,12 @@ func selectContextTurns(turns []contextTurn, maxMessages, maxTokens int) []conte
 	selected := make([]contextTurn, 0, min(maxMessages, len(turns)))
 	tokens := 0
 	for _, turn := range turns {
-		if len(selected) >= maxMessages || tokens+estimateTokens(turn.text) > maxTokens {
+		turnTokens := counter.messageTokens(turn.text)
+		if len(selected) >= maxMessages || tokens+turnTokens > maxTokens {
 			continue
 		}
 		selected = append(selected, turn)
-		tokens += estimateTokens(turn.text)
+		tokens += turnTokens
 	}
 	for i, j := 0, len(selected)-1; i < j; i, j = i+1, j-1 {
 		selected[i], selected[j] = selected[j], selected[i]
@@ -1033,7 +1035,8 @@ func (a *AIChat) buildMessages(input string, u UserDetails, personaName string, 
 		}
 		turns = append(turns, contextTurn{role: role, text: text, timestamp: ctx.Timestamp, order: len(turns)})
 	}
-	selected := selectContextTurns(turns, config.MaxContextMessages, config.MaxContextTokens)
+	selected := selectContextTurns(
+		turns, config.MaxContextMessages, config.MaxContextTokens, config.modelTokenCounter())
 	guidance := ""
 	if len(selected) > 0 {
 		guidance += "\nConversation is active; respond to the current message and build on relevant context."
