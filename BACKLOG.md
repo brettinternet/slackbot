@@ -207,6 +207,8 @@ Acceptance criteria:
 
 ### SB-014: Add focused integration tests for the event pipeline
 
+Status: Complete
+
 Exercise the complete signed-request-to-processor path in addition to package unit tests.
 
 Acceptance criteria:
