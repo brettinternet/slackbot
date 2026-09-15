@@ -114,6 +114,26 @@ restart-required setting emits one warning naming every such setting. AI chat an
 be enabled at runtime only when the process started with an OpenAI API key; shower thoughts also need
 a non-empty `user.notify_channel`.
 
+### AI conversation privacy
+
+AI chat persists the user's Slack ID, channel or thread scope, selected persona name, message text,
+message role, and timestamp in `DATA_DIR/aichat_context.db`. Live Slack history fetched for a response
+is not copied into this database. `aichat.max_context_age` controls both the oldest persisted message
+eligible for a response and its retention period (default `2h`). Expired messages are removed at
+startup and hourly thereafter. Persona assignments are retained for `aichat.sticky_duration`; expired
+assignments are removed by the same cleanup. Both settings apply to a running process after a valid
+configuration reload.
+
+Operators can delete one exact conversation scope, including its persisted persona assignment:
+
+```sh
+slackbot clear-ai-context --scope C0123456789
+slackbot clear-ai-context --scope 'C0123456789:thread:1712345678.000100'
+```
+
+A channel scope does not delete its thread scopes, and clearing a thread does not delete channel
+history. The command reports record counts without logging stored message content.
+
 ## Container
 
 ```yaml

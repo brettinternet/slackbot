@@ -48,6 +48,7 @@ func NewCommandRoot(s *Bot) (*bool, *cli.Command) {
 
 func Commands(s *Bot) []*cli.Command {
 	return []*cli.Command{
+		newClearAIContextCommand(s),
 		newDeleteMessagesFromChannelCommand(s),
 		newInviteToChannelCommand(s),
 		newSendMessageCommand(s),

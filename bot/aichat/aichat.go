@@ -60,8 +60,9 @@ func parseSlackTimestamp(ts string) time.Time {
 }
 
 const (
-	eventChannelSize = 100
-	workerCount      = 3
+	eventChannelSize       = 100
+	workerCount            = 3
+	contextCleanupInterval = time.Hour
 )
 
 type aiService interface {
@@ -176,13 +177,84 @@ func (c *AIChat) ProcessorType() string {
 func (a *AIChat) Start(ctx context.Context) error {
 	a.startOnce.Do(func() {
 		a.isConnected.Store(true)
-		a.workers.Add(1)
+		a.workers.Add(2)
 		go func() {
 			defer a.workers.Done()
 			a.handleEvents(ctx)
 		}()
+		go func() {
+			defer a.workers.Done()
+			a.runContextCleanup(ctx)
+		}()
 	})
 	return nil
+}
+
+func (a *AIChat) runContextCleanup(ctx context.Context) {
+	if a.context == nil {
+		return
+	}
+	a.cleanupExpiredContext()
+	ticker := time.NewTicker(contextCleanupInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-a.stopCh:
+			return
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			a.cleanupExpiredContext()
+		}
+	}
+}
+
+func (a *AIChat) cleanupExpiredContext() {
+	config := a.configSnapshot()
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+
+	counts, err := a.context.CleanExpired(config.MaxContextAge, config.StickyDuration)
+	if err != nil {
+		a.log.Warn("Failed to clean expired AI chat data",
+			botlogging.Operation("cleanup_context"), zap.Error(err))
+		return
+	}
+	if config.StickyDuration > 0 {
+		cutoff := time.Now().Add(-config.StickyDuration)
+		for scope, assignment := range a.stickyPersonas {
+			if assignment.Timestamp.Before(cutoff) {
+				delete(a.stickyPersonas, scope)
+			}
+		}
+	}
+	if counts.Contexts > 0 || counts.Personas > 0 {
+		a.log.Info("Cleaned expired AI chat data",
+			botlogging.Operation("cleanup_context"),
+			zap.Int64("contexts", counts.Contexts),
+			zap.Int64("personas", counts.Personas))
+	}
+}
+
+// ClearContext removes persisted messages and persona state for one exact channel
+// or thread scope.
+func (a *AIChat) ClearContext(scope string) (DeletionCounts, error) {
+	scope = strings.TrimSpace(scope)
+	if scope == "" {
+		return DeletionCounts{}, fmt.Errorf("conversation scope is required")
+	}
+	if a.context == nil {
+		return DeletionCounts{}, fmt.Errorf("AI chat context storage is unavailable")
+	}
+
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+	counts, err := a.context.DeleteConversationScope(scope)
+	if err != nil {
+		return DeletionCounts{}, err
+	}
+	delete(a.stickyPersonas, scope)
+	return counts, nil
 }
 
 // SetConfig atomically applies reloadable AI chat and persona settings.
@@ -211,7 +283,7 @@ func cloneConfig(c Config) Config {
 }
 
 func (a *AIChat) enabled() bool {
-	return a.configSnapshot().Enabled
+	return a.ai != nil && a.configSnapshot().Enabled
 }
 
 func (a *AIChat) Stop(ctx context.Context) error {
@@ -772,19 +844,24 @@ func (a *AIChat) userPersonaWithLogger(log *zap.Logger, scope string) string {
 	defer a.mutex.Unlock()
 	now := time.Now()
 	assignment, ok := a.stickyPersonas[scope]
-	if !ok && a.context != nil {
-		var err error
-		assignment, ok, err = a.context.GetPersonaAssignment(scope)
+	if a.context != nil {
+		persisted, persistedOK, err := a.context.TouchPersonaAssignment(scope, now, config.StickyDuration)
 		if err != nil {
 			log.Warn("Failed to retrieve persona assignment",
 				botlogging.Operation("retrieve_persona_assignment"), zap.String("scope", scope), zap.Error(err))
+		} else {
+			// Persistence is authoritative so an administrative clear performed by
+			// another process also invalidates this process's cache.
+			assignment, ok = persisted, persistedOK
+			if !ok {
+				delete(a.stickyPersonas, scope)
+			}
 		}
 	}
 	_, personaStillConfigured := config.Personas[assignment.Name]
 	if ok && personaStillConfigured && (config.StickyDuration <= 0 || now.Sub(assignment.Timestamp) < config.StickyDuration) {
 		assignment.Timestamp = now
 		a.stickyPersonas[scope] = assignment
-		a.storePersonaAssignment(log, scope, assignment)
 		return assignment.Name
 	}
 	personaName := a.randomPersonaName()

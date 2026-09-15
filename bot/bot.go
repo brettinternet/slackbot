@@ -193,23 +193,29 @@ func (s *Bot) initializeServices(ctx context.Context) error {
 	}
 	s.log.Info("Vibecheck service initialized", zap.Bool("enabled", vibecheckConfig.Enabled))
 
-	// Only initialize AI services if OpenAI API key is provided
+	// The AI chat lifecycle always runs its storage cleanup, even when generation
+	// is disabled because no OpenAI API key was configured.
 	aiConfig := s.configManager.GetAIConfig()
 	if aiConfig.OpenAIAPIKey != "" {
 		s.ai = ai.NewAI(s.log, aiConfig, s.metrics)
 		if err := s.addShutdownStep("stop ai", s.ai.Stop); err != nil {
 			return err
 		}
+	}
 
-		// Keep dynamic AI feature workers initialized exactly once. Their current
-		// configuration determines whether they accept work or schedule posts.
-		aichatConfig := s.configManager.GetAIChatConfig()
+	aichatConfig := s.configManager.GetAIChatConfig()
+	if s.ai != nil {
 		s.aichat = aichat.NewAIChat(s.log, aichatConfig, s.slack, s.ai)
-		if err := s.addShutdownStep("stop aichat", s.aichat.Stop); err != nil {
-			return err
-		}
-		s.log.Info("AI Chat service initialized", zap.Bool("enabled", len(aichatConfig.Personas) > 0))
+	} else {
+		s.aichat = aichat.NewAIChat(s.log, aichatConfig, s.slack, nil)
+	}
+	if err := s.addShutdownStep("stop aichat", s.aichat.Stop); err != nil {
+		return err
+	}
+	s.log.Info("AI Chat service initialized",
+		zap.Bool("enabled", len(aichatConfig.Personas) > 0 && s.ai != nil))
 
+	if s.ai != nil {
 		stConfig := s.configManager.GetShowerthoughtConfig()
 		s.showerThought = showerthought.New(s.log, stConfig, s.slack, s.ai)
 		if err := s.addShutdownStep("stop showerthought", s.showerThought.Stop); err != nil {
@@ -218,7 +224,7 @@ func (s *Bot) initializeServices(ctx context.Context) error {
 		s.log.Info("Shower thought service initialized",
 			zap.Bool("enabled", stConfig.Enabled && stConfig.NotifyChannel != ""))
 	} else {
-		s.log.Info("AI services disabled - no OpenAI API key provided")
+		s.log.Info("AI generation disabled - no OpenAI API key provided")
 	}
 
 	return nil
@@ -304,7 +310,9 @@ func (s *Bot) Run(runCtx context.Context) (runErr error) {
 	}
 
 	if s.aichat != nil {
-		s.http.RegisterEventProcessor(s.aichat)
+		if s.ai != nil {
+			s.http.RegisterEventProcessor(s.aichat)
+		}
 		if err := s.startService(runCtx, "aichat", s.aichat.Start, s.aichat.Stop); err != nil {
 			return err
 		}

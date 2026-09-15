@@ -3,10 +3,12 @@ package bot
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/slack-go/slack"
 	"github.com/urfave/cli/v3"
 	"go.uber.org/zap"
+	"slackbot.arpa/bot/aichat"
 )
 
 type deleteMessagesFromChannelCommandFlags struct {
@@ -92,6 +94,61 @@ func deleteMessagesFromChannel(ctx context.Context, cmd *cli.Command, s *Bot) er
 	}
 
 	s.log.Info("Finished deleting bot messages", zap.Int("messagesDeleted", messagesDeleted))
+	return nil
+}
+
+type clearAIContextCommandFlags struct {
+	Scope string
+}
+
+func newClearAIContextCommand(s *Bot) *cli.Command {
+	return &cli.Command{
+		Name:   "clear-ai-context",
+		Usage:  "Clear stored AI messages and persona state for a channel or thread scope",
+		Action: cmdWithBot(clearAIContext, s),
+		Flags: []cli.Flag{
+			&cli.StringFlag{
+				Name:     "scope",
+				Usage:    "Conversation scope (channel ID or CHANNEL_ID:thread:THREAD_TS)",
+				Required: true,
+			},
+		},
+	}
+}
+
+func clearAIContext(_ context.Context, cmd *cli.Command, s *Bot) error {
+	flags := clearAIContextCommandFlags{Scope: strings.TrimSpace(cmd.String("scope"))}
+	if flags.Scope == "" {
+		return fmt.Errorf("conversation scope is required")
+	}
+
+	var counts aichat.DeletionCounts
+	var err error
+	if s.aichat != nil {
+		counts, err = s.aichat.ClearContext(flags.Scope)
+	} else {
+		config := s.configManager.GetConfig()
+		if config == nil {
+			return fmt.Errorf("configuration is unavailable")
+		}
+		storage, openErr := aichat.NewContextStorage(config.DataDir)
+		if openErr != nil {
+			return fmt.Errorf("open AI chat context storage: %w", openErr)
+		}
+		defer func() {
+			if closeErr := storage.Close(); closeErr != nil {
+				s.log.Warn("Failed to close AI chat context storage", zap.Error(closeErr))
+			}
+		}()
+		counts, err = storage.DeleteConversationScope(flags.Scope)
+	}
+	if err != nil {
+		return fmt.Errorf("clear AI context for scope %q: %w", flags.Scope, err)
+	}
+	s.log.Info("Cleared AI chat context",
+		zap.String("scope", flags.Scope),
+		zap.Int64("contexts", counts.Contexts),
+		zap.Int64("personas", counts.Personas))
 	return nil
 }
 

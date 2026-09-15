@@ -149,6 +149,8 @@ Dependencies: SB-002
 
 ### SB-010: Add AI conversation privacy controls
 
+Status: Complete
+
 Give operators and users control over persisted conversation history.
 
 Acceptance criteria:

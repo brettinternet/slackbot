@@ -197,10 +197,111 @@ func (cs *ContextStorage) GetPersonaAssignment(scope string) (personaAssignment,
 	return assignment, true, nil
 }
 
-// CleanOldContext removes conversation context older than the specified duration
+// TouchPersonaAssignment atomically retrieves and refreshes a non-expired
+// assignment. The single statement prevents a concurrent administrative clear
+// from being followed by a stale refresh upsert.
+func (cs *ContextStorage) TouchPersonaAssignment(
+	scope string,
+	now time.Time,
+	maxAge time.Duration,
+) (personaAssignment, bool, error) {
+	query := `
+		UPDATE persona_assignment
+		SET timestamp = ?
+		WHERE conversation_scope = ?`
+	args := []any{now, scope}
+	if maxAge > 0 {
+		query += ` AND timestamp >= ?`
+		args = append(args, now.Add(-maxAge))
+	}
+	query += ` RETURNING persona_name, timestamp`
+
+	var assignment personaAssignment
+	err := cs.db.QueryRow(query, args...).Scan(&assignment.Name, &assignment.Timestamp)
+	if err == sql.ErrNoRows {
+		return personaAssignment{}, false, nil
+	}
+	if err != nil {
+		return personaAssignment{}, false, err
+	}
+	return assignment, true, nil
+}
+
+// DeletionCounts reports how many persisted records were removed.
+type DeletionCounts struct {
+	Contexts int64
+	Personas int64
+}
+
+// DeleteConversationScope removes all stored messages and the persona assignment
+// for one channel or thread scope in a single transaction.
+func (cs *ContextStorage) DeleteConversationScope(scope string) (DeletionCounts, error) {
+	return cs.deleteWhere(
+		`DELETE FROM conversation_context WHERE channel_id = ?`, []any{scope},
+		`DELETE FROM persona_assignment WHERE conversation_scope = ?`, []any{scope},
+	)
+}
+
+// CleanExpired removes conversation context older than contextMaxAge and persona
+// assignments older than personaMaxAge. A non-positive age leaves that data unchanged.
+func (cs *ContextStorage) CleanExpired(contextMaxAge, personaMaxAge time.Duration) (DeletionCounts, error) {
+	var contextQuery, personaQuery string
+	var contextArgs, personaArgs []any
+	if contextMaxAge > 0 {
+		contextQuery = `DELETE FROM conversation_context WHERE timestamp < ?`
+		contextArgs = []any{time.Now().Add(-contextMaxAge)}
+	}
+	if personaMaxAge > 0 {
+		personaQuery = `DELETE FROM persona_assignment WHERE timestamp < ?`
+		personaArgs = []any{time.Now().Add(-personaMaxAge)}
+	}
+	return cs.deleteWhere(contextQuery, contextArgs, personaQuery, personaArgs)
+}
+
+func (cs *ContextStorage) deleteWhere(
+	contextQuery string,
+	contextArgs []any,
+	personaQuery string,
+	personaArgs []any,
+) (counts DeletionCounts, err error) {
+	tx, err := cs.db.Begin()
+	if err != nil {
+		return counts, err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if contextQuery != "" {
+		result, execErr := tx.Exec(contextQuery, contextArgs...)
+		if execErr != nil {
+			return counts, execErr
+		}
+		counts.Contexts, err = result.RowsAffected()
+		if err != nil {
+			return counts, err
+		}
+	}
+	if personaQuery != "" {
+		result, execErr := tx.Exec(personaQuery, personaArgs...)
+		if execErr != nil {
+			return counts, execErr
+		}
+		counts.Personas, err = result.RowsAffected()
+		if err != nil {
+			return counts, err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return DeletionCounts{}, err
+	}
+	return counts, nil
+}
+
+// CleanOldContext removes conversation context older than the specified duration.
 func (cs *ContextStorage) CleanOldContext(maxAge time.Duration) error {
-	query := `DELETE FROM conversation_context WHERE timestamp < ?`
-	cutoff := time.Now().Add(-maxAge)
-	_, err := cs.db.Exec(query, cutoff)
+	_, err := cs.CleanExpired(maxAge, 0)
 	return err
 }

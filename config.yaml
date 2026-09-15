@@ -24,9 +24,9 @@ aichat:
   sticky_duration: 30m
   # Rate-limit non-mention messages. Set to false to let the bot respond to every message.
   rate_limit_enabled: true
-  # Context limits to prevent token overflow
+  # Context limits to prevent token overflow and bound stored conversation history.
   max_context_messages: 10 # Maximum number of previous messages to include
-  max_context_age: 2h # Maximum age of messages to include
+  max_context_age: 2h # Maximum age to include or retain persisted messages
   max_context_tokens: 2000 # Approximate maximum tokens (4 chars ≈ 1 token)
   # Personas are optional flavor layered on top of a grounded, adaptive default voice.
   personas:
